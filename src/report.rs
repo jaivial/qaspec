@@ -1,6 +1,7 @@
 //! Run report: terminal summary, JSON (`report-1` schema) and JUnit XML.
 
 use crate::browser::Signals;
+use crate::cache::Origin;
 use crate::runner::Planned;
 use serde::Serialize;
 
@@ -38,6 +39,9 @@ pub struct ItemResult {
     pub status: Status,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub detail: String,
+    /// For goal items: whether it replayed from the cache or the agent drove the browser.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<Origin>,
 }
 
 impl ItemResult {
@@ -46,7 +50,13 @@ impl ItemResult {
             label,
             status,
             detail: detail.to_string(),
+            cache: None,
         }
+    }
+
+    pub fn cached(mut self, origin: Origin) -> Self {
+        self.cache = Some(origin);
+        self
     }
 }
 
@@ -247,10 +257,29 @@ impl Report {
         };
     }
 
+    /// Goals answered by a recording, and goals the agent drove and stored.
+    pub fn cache_counts(&self) -> (usize, usize) {
+        let mut replayed = 0;
+        let mut recorded = 0;
+        for s in &self.suites {
+            for st in &s.steps {
+                for i in &st.items {
+                    match i.cache {
+                        Some(Origin::Replayed) => replayed += 1,
+                        Some(Origin::Recorded) => recorded += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        (replayed, recorded)
+    }
+
     pub fn summary(&self) -> String {
         let t = &self.steps;
+        let (replayed, recorded) = self.cache_counts();
         format!(
-            "\n{} {} — steps: {} passed, {} failed, {} blocked, {} skipped · {} suites · {:.1}s · 1 browser session · {} browser calls · {} model calls ({} tokens)",
+            "\n{} {} — steps: {} passed, {} failed, {} blocked, {} skipped · {} suites · {:.1}s · 1 browser session · {} browser calls · {} model calls ({} tokens){}",
             self.status.icon(),
             self.status.as_str().to_uppercase(),
             t.passed,
@@ -261,7 +290,15 @@ impl Report {
             self.duration_ms as f64 / 1000.0,
             self.browser_calls,
             self.model_calls,
-            self.tokens
+            self.tokens,
+            if replayed + recorded == 0 {
+                String::new()
+            } else {
+                format!(
+                    " · {replayed} goal{} replayed from cache, {recorded} recorded",
+                    if replayed == 1 { "" } else { "s" }
+                )
+            }
         )
     }
 

@@ -3,6 +3,7 @@
 
 use crate::agent::{self, Context as AgentCtx, Verdict};
 use crate::browser::{request_matches, truncate, Browser};
+use crate::cache::{self, Cache, CacheMode, KeyParts, Origin, Recorded, Recording};
 use crate::config::{Config, Identity};
 use crate::llm::Llm;
 use crate::report::{ItemResult, Report, Status, StepResult, SuiteResult};
@@ -16,6 +17,8 @@ use std::time::Instant;
 pub struct RunOptions {
     pub keep_open: bool,
     pub quiet: bool,
+    /// Replay cache: `auto` replays and records, `strict` fails on a missing recording, `off` off.
+    pub cache: CacheMode,
 }
 
 pub struct Runner<'a> {
@@ -34,7 +37,47 @@ pub struct Runner<'a> {
     health_checked: HashMap<String, bool>,
     /// Login suites run during this run (reported as setup).
     setup_results: Vec<SuiteResult>,
+    cache: Cache,
     opts: RunOptions,
+}
+
+/// The result of a goal: its outcome, plus what the replay cache had to say about it.
+struct CachedGoal {
+    outcome: agent::Outcome,
+    key: String,
+    recorded: Vec<Recorded>,
+    origin: Origin,
+    /// The interpolated goal text the key was computed from.
+    goal_text: String,
+    /// The page the goal started from, kept for the recording's metadata.
+    start_path: String,
+    fingerprint: String,
+}
+
+impl CachedGoal {
+    /// The recording to store once the whole step has passed.
+    fn recording(
+        &self,
+        p: &Planned,
+        step: &str,
+        project: &str,
+        id: Option<&Identity>,
+    ) -> Recording {
+        Recording {
+            schema_version: cache::schema(),
+            key: self.key.clone(),
+            project: project.to_string(),
+            identity: id.map(|i| i.name.clone()).unwrap_or_default(),
+            file: p.file.clone(),
+            suite: p.suite.name.clone(),
+            step: step.to_string(),
+            goal: self.goal_text.clone(),
+            start_path: self.start_path.clone(),
+            fingerprint: self.fingerprint.clone(),
+            actions: self.recorded.clone(),
+            labels: self.recorded.iter().map(cache::label).collect(),
+        }
+    }
 }
 
 /// One suite to run, with the project it belongs to.
@@ -175,6 +218,30 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The current value of an interpolatable key (`params.x`, `run.id`, a capture, ...). Used by the
+/// replay cache to resolve the placeholders a recording kept.
+pub fn resolve_key(
+    cfg: &Config,
+    project: &str,
+    id: Option<&Identity>,
+    run_id: &str,
+    vars: &BTreeMap<String, String>,
+    key: &str,
+) -> Option<String> {
+    match key {
+        "project.base_url" => cfg.projects.get(project).map(|p| p.base_url.clone()),
+        "project.name" => Some(project.to_string()),
+        "env" => Some(cfg.env.clone()),
+        "run.id" => Some(run_id.to_string()),
+        "identity.username" => id.and_then(|i| i.username.clone()),
+        "identity.name" => id.map(|i| i.name.clone()),
+        _ => key
+            .strip_prefix("params.")
+            .and_then(|n| cfg.params.get(n).cloned())
+            .or_else(|| vars.get(key).cloned()),
+    }
+}
+
 pub fn load_spec(path: &Path, cfg_root: &Path) -> Result<SpecFile> {
     let src =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -305,6 +372,7 @@ impl<'a> Runner<'a> {
             unavailable: HashMap::new(),
             health_checked: HashMap::new(),
             setup_results: Vec::new(),
+            cache: Cache::new(&cfg.root, &cfg.env, opts.cache),
             opts,
         })
     }
@@ -317,6 +385,13 @@ impl<'a> Runner<'a> {
 
     pub fn run(&mut self, planned: &[Planned]) -> Result<Report> {
         let started = Instant::now();
+        if self.cache.mode() != CacheMode::Off {
+            self.say(&format!(
+                "replay cache: {} ({})",
+                self.cache.mode().as_str(),
+                self.cache.dir().display()
+            ));
+        }
         let mut report = Report::new(&self.run_id, &self.cfg.env, self.browser.session());
         for p in planned {
             let r = self.run_suite(p);
@@ -546,6 +621,171 @@ impl<'a> Runner<'a> {
         Ok(())
     }
 
+    /// The key of a goal's recording, and the page fingerprint that goes with it. Both are read
+    /// from the live page: a step that starts somewhere else is a different situation.
+    fn goal_key(
+        &mut self,
+        p: &Planned,
+        project: &str,
+        id: Option<&Identity>,
+        step: &str,
+        goal: &str,
+    ) -> Result<(KeyParts, String, String)> {
+        let url = self.browser.url().unwrap_or_default();
+        let snap = self
+            .browser
+            .snapshot(true)
+            .or_else(|_| self.browser.snapshot(false))?;
+        let fingerprint = cache::fingerprint(&url, &snap);
+        // `${run.id}` changes on every run by design, so the same goal must key the same way every
+        // time: it is put back as the placeholder before hashing. The recorded *values* keep the
+        // real run id, so a replay re-uses exactly what the agent typed.
+        let goal_key = goal.replace(&self.run_id, "${run.id}");
+        let parts = KeyParts {
+            project: project.to_string(),
+            identity: id.map(|i| i.name.clone()).unwrap_or_default(),
+            file: p.file.clone(),
+            suite: p.suite.name.clone(),
+            step: step.to_string(),
+            goal: goal_key,
+            fingerprint: fingerprint.clone(),
+        };
+        Ok((parts, url, fingerprint))
+    }
+
+    /// Replays the goal from the cache when possible; otherwise (or if the replay broke) the agent
+    /// drives the browser from wherever the replay left it, and the new path is recorded.
+    #[allow(clippy::too_many_arguments)]
+    fn cached_goal(
+        &mut self,
+        p: &Planned,
+        project: &str,
+        id: Option<&Identity>,
+        step: &str,
+        raw_goal: &str,
+        goal: &str,
+        history: &[String],
+    ) -> Result<CachedGoal> {
+        let mode = self.cache.mode();
+        let (parts, url, fingerprint) = if mode == CacheMode::Off {
+            (KeyParts::default(), String::new(), String::new())
+        } else {
+            self.goal_key(p, project, id, step, goal)?
+        };
+        let key = cache::compute_key(&parts);
+        if mode != CacheMode::Off {
+            if let Some(r) = self.cache.load(&key) {
+                let secrets = id.map(|i| i.secrets.clone()).unwrap_or_default();
+                let cfg = self.cfg;
+                let root = cfg.root.clone();
+                let mut secret = |name: &str| -> Result<String> {
+                    secrets
+                        .get(name)
+                        .ok_or_else(|| anyhow!("unknown secret `{name}`"))?
+                        .read(&root)
+                };
+                let resolve = |u: &str| {
+                    cfg.resolve_url(project, u)
+                        .unwrap_or_else(|_| u.to_string())
+                };
+                let run_id = self.run_id.clone();
+                let vars = self.vars.clone();
+                let value = move |k: &str| resolve_key(cfg, project, id, &run_id, &vars, k);
+                match self
+                    .cache
+                    .replay(&r, &mut self.browser, &resolve, &value, &mut secret)
+                {
+                    Ok(labels) => {
+                        self.say(&format!(
+                            "      ↻ replayed {} actions from cache",
+                            labels.len()
+                        ));
+                        return Ok(CachedGoal {
+                            outcome: agent::Outcome {
+                                verdict: Verdict::Passed,
+                                reason: "replayed from cache".into(),
+                                actions: labels,
+                                recorded: vec![],
+                            },
+                            key,
+                            recorded: vec![],
+                            origin: Origin::Replayed,
+                            goal_text: goal.to_string(),
+                            start_path: url.clone(),
+                            fingerprint: fingerprint.clone(),
+                        });
+                    }
+                    Err(e) if mode == CacheMode::Strict => {
+                        return Ok(CachedGoal {
+                            outcome: agent::Outcome {
+                                verdict: Verdict::Failed,
+                                reason: format!("CACHE_REPLAY_FAILED: {e}"),
+                                actions: vec![],
+                                recorded: vec![],
+                            },
+                            key,
+                            recorded: vec![],
+                            origin: Origin::Replayed,
+                            goal_text: goal.to_string(),
+                            start_path: url.clone(),
+                            fingerprint: fingerprint.clone(),
+                        });
+                    }
+                    // auto: self-heal. The agent continues from the current page state.
+                    Err(e) => self.say(&format!(
+                        "      ↻ cache replay stopped ({e}); the agent takes over"
+                    )),
+                }
+            } else if mode == CacheMode::Strict {
+                return Ok(CachedGoal {
+                    outcome: agent::Outcome {
+                        verdict: Verdict::Failed,
+                        reason: format!(
+                            "CACHE_MISSING: no recording for this goal in {} (run with --cache auto to record one)",
+                            self.cache.dir().display()
+                        ),
+                        actions: vec![],
+                        recorded: vec![],
+                    },
+                    key,
+                    recorded: vec![],
+                    origin: Origin::Replayed,
+                    goal_text: goal.to_string(),
+                    start_path: url.clone(),
+                    fingerprint: fingerprint.clone(),
+                });
+            }
+        }
+        let out = self.goal(project, id, goal, history)?;
+        // Values the goal interpolated (params, run.id, a capture) go back into the recording as
+        // placeholders, so the next run replays them with ITS values.
+        let cfg = self.cfg;
+        let run_id = self.run_id.clone();
+        let vars = self.vars.clone();
+        let t = cache::Templater::from_goal(raw_goal, &|k| {
+            resolve_key(cfg, project, id, &run_id, &vars, k)
+        });
+        let recorded = if t.is_empty() {
+            out.recorded.clone()
+        } else {
+            cache::template_actions(&out.recorded, &t)
+        };
+        let origin = if mode != CacheMode::Off && !recorded.is_empty() {
+            Origin::Recorded
+        } else {
+            Origin::Agent
+        };
+        Ok(CachedGoal {
+            outcome: out,
+            key,
+            recorded,
+            origin,
+            goal_text: goal.to_string(),
+            start_path: url,
+            fingerprint,
+        })
+    }
+
     fn goal(
         &mut self,
         project: &str,
@@ -711,10 +951,21 @@ impl<'a> Runner<'a> {
             };
             r.duration_ms = t.elapsed().as_millis() as u64;
             r.reason = self.browser.redact(&r.reason);
+            // Goals answered from a recording are marked on the step line.
+            let replayed = r
+                .items
+                .iter()
+                .filter(|i| i.cache == Some(Origin::Replayed))
+                .count();
             self.say(&format!(
-                "  {} {} ({:.1}s){}",
+                "  {} {}{} ({:.1}s){}",
                 r.status.icon(),
                 st.name,
+                if replayed > 0 {
+                    format!(" (replayed {replayed})")
+                } else {
+                    String::new()
+                },
                 r.duration_ms as f64 / 1000.0,
                 if r.reason.is_empty() {
                     String::new()
@@ -791,24 +1042,39 @@ impl<'a> Runner<'a> {
         let mut actions = Vec::new();
         let mut failed = false;
         let mut blocked: Option<String> = None;
+        // Goals driven by the agent, kept until the whole step passes: only then is the recording
+        // worth storing (a step whose expectations failed may have reached the page by luck).
+        let mut pending: Vec<CachedGoal> = Vec::new();
         for idx in order {
             let it = &st.items[idx];
             let r = match it {
                 Item::Goal { text, .. } => {
+                    let raw_goal = text.clone();
                     let text = interp(text, &self.vars, &self.run_id)?;
                     if failed || blocked.is_some() {
                         ItemResult::new(format!("goal('{text}')"), Status::Skipped, "")
                     } else {
-                        let out = self.goal(project, identity.as_ref(), &text, history)?;
-                        actions.extend(out.actions.clone());
-                        let s = verdict_status(&out.verdict);
+                        let out = self.cached_goal(
+                            p,
+                            project,
+                            identity.as_ref(),
+                            &st.name,
+                            &raw_goal,
+                            &text,
+                            history,
+                        )?;
+                        actions.extend(out.outcome.actions.clone());
+                        let s = verdict_status(&out.outcome.verdict);
                         if s == Status::Failed {
                             failed = true;
                         }
                         if s == Status::Blocked {
-                            blocked = Some(out.reason.clone());
+                            blocked = Some(out.outcome.reason.clone());
                         }
-                        ItemResult::new(format!("goal('{text}')"), s, &out.reason)
+                        let origin = out.origin;
+                        let reason = out.outcome.reason.clone();
+                        pending.push(out);
+                        ItemResult::new(format!("goal('{text}')"), s, &reason).cached(origin)
                     }
                 }
                 Item::Expect { check, .. } => {
@@ -919,7 +1185,20 @@ impl<'a> Runner<'a> {
                 .unwrap_or_default(),
             _ => String::new(),
         };
-        let _ = p;
+        // Every expectation of the step passed: now the recordings describe a verified path.
+        if status == Status::Passed {
+            for g in &pending {
+                if g.origin != Origin::Recorded || g.recorded.is_empty() {
+                    continue;
+                }
+                if let Err(e) =
+                    self.cache
+                        .store(&g.recording(p, &st.name, project, identity.as_ref()))
+                {
+                    self.say(&format!("      ⚠ could not store the recording: {e}"));
+                }
+            }
+        }
         Ok(StepResult {
             name: st.name.clone(),
             status,

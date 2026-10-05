@@ -49,6 +49,9 @@ qaspec sits in between: **an agent that clicks like a person and inspects like a
   runs browsers in parallel. Each project gets its own tab, and the session is reused across suites.
 - **Sign in once.** Identities sign in once (with a login spec, or the agent does it by itself). The
   state is saved under `.qaspec/state/` with mode 600 and reused across runs until it expires.
+- **Replay cache.** A goal that passed (and whose expectations passed) is recorded as browser
+  actions with semantic locators. If the UI is unchanged, the next run replays them and makes **zero
+  model calls** for that goal; if the UI moved, the agent takes over and the recording is rewritten.
 - **Config, not code.** Base URLs per environment, credentials as secrets, params, and projects that
   depend on each other all live in `qaspec.toml`.
 - **Secrets stay secret.** The model only sees secret *names*. Values are typed through
@@ -89,8 +92,8 @@ Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is [e2e by Te
 | One browser for the whole run | ✅ | ❌ | ❌ |
 | Dependent apps: health, order, shared data | ✅ | ❌ | ❌ |
 | Passwords never reach the model | ✅ | ✅ (no model) | ✅ |
-| Runs without calling a model | ❌ (exact checks only) | ✅ | ✅ (from the cache) |
-| Replay cache for unchanged UI | ❌ | ✅ (no model) | ✅ |
+| Runs without calling a model | ✅ (exact checks + replay cache) | ✅ | ✅ (from the cache) |
+| Replay cache for unchanged UI | ✅ | ✅ (no model) | ✅ |
 | Parallel workers | ❌ | ✅ | ✅ |
 | Mobile apps (iOS, Android) | ❌ | ✅ (Appium, Detox) | ✅ |
 | Single binary, no Node runtime | ✅ | ❌ | ❌ |
@@ -110,7 +113,7 @@ In detail, with agent-browser on its own as a fourth column:
 | Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test, once per run (sessions are never reused across runs) | `state save` / `load` by hand |
 | Several dependent apps | `depends_on`, health checks, captures | Projects, by hand | Targets | No |
 | Runtime | One Rust binary + agent-browser | Node + browsers | Node 22.12+ + Playwright | agent-browser |
-| Model calls | Every goal and judged check (no replay cache yet) | None | Fewer after the first run | Every step |
+| Model calls | Every goal and judged check the first time, then only the judged checks | None | Fewer after the first run | Every step |
 
 Based on the e2e 0.16 and agent-browser 0.27 docs, and on porting a real two-app suite. Corrections are welcome as issues.
 
@@ -131,6 +134,7 @@ qaspec check         # parse specs, validate config, secrets and identities — 
 qaspec run           # run everything in one browser session
 qaspec run specs/todos.qa.ts --env dev --set params.todo="Buy bread" --headed
 qaspec run --keep-open   # leave the browser up; the next run reuses it (session qaspec-<env>)
+qaspec run --cache strict  # CI: a missing or stale recording is a failure, never a model call
 qaspec state list    # saved sign-ins; `qaspec state clear app.qa` forces a new login
 ```
 
@@ -225,6 +229,33 @@ qaspec run
 4. Each step marks the signal window, navigates if it has `start`, then runs goals, expectations and captures.
 5. The agent's tools map one-to-one to agent-browser commands: snapshot, click, fill, type, press,
    select, hover, scroll, open, back, wait, read_console, read_network, eval, fill_secret and done.
+6. Before a goal, the replay cache is consulted (§ Replay cache). Otherwise the agent drives the
+   browser, and a passing step records what it did.
+
+## Replay cache
+
+The second run of an unchanged app costs no model calls for its goals. qaspec stores, per goal that
+passed **with all of its expectations passing**, the sequence of browser actions the agent performed
+in `.qaspec/cache/<env>/<sha>.json` (mode 600).
+
+- **Key** = hash of project, identity, spec file, suite, step, the goal text after interpolation
+  (`${run.id}` put back as the placeholder, so the same goal always keys the same way) and a
+  fingerprint of the page the goal starts from: the URL path plus the roles and accessible names of
+  the interactive snapshot. Steps share browser state, so that starting page is part of the key.
+- **No ephemeral refs.** An `@e7` is stored as a semantic locator — role + accessible name, plus an
+  index when the page has several with the same name — and replayed with agent-browser's
+  `find role <tag> <action> --name "<name>"` (`find label`, `find nth` and the tag alone are tried as
+  fallbacks, because `find --name` is unreliable on some tags in 0.27).
+- **Secrets stay secret.** `fill_secret` is recorded as the secret *name* only; the value is read at
+  replay time and typed through agent-browser's stdin, never in argv and never in the cache file.
+- **Values follow the run.** `${params.x}`, `${run.id}` and captures keep their placeholders in the
+  recording and are resolved with the *current* run's values, so a replay reaches the same state the
+  expectations of this run ask about.
+- **Self-healing.** If a replayed action cannot be located, the agent continues from the current page
+  and the recording is rewritten. `--cache strict` turns a missing or stale recording into a failure
+  (`CACHE_MISSING` / `CACHE_REPLAY_FAILED`) with zero model calls, which is what CI wants.
+- `--cache off` disables it. The JSON report marks each goal item with `"cache":
+  "replayed" | "recorded" | "agent"`, and the terminal prints `(replayed)` on those steps.
 
 ## Examples
 
@@ -237,7 +268,7 @@ qaspec run
 ## Status
 
 `0.1.0` is the first usable release. The [`plan/`](plan/) folder holds the analysis and the roadmap:
-replay cache (no model calls when the UI is unchanged), `.qa.md` specs, `explore`, HTML reports,
+`.qa.md` specs, `explore`, HTML reports, judge-verdict caching,
 cross-project captures with `needs` between files, and identity switching inside one project
 (implemented, not yet battle-tested).
 

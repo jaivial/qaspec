@@ -2,6 +2,7 @@
 //! natural-language expectations against the screen and the step's technical signals.
 
 use crate::browser::{truncate, Browser, Signals};
+use crate::cache::{self, Recorded};
 use crate::llm::{extract_json, Llm};
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -18,6 +19,8 @@ pub struct Outcome {
     pub verdict: Verdict,
     pub reason: String,
     pub actions: Vec<String>,
+    /// Browser actions of this goal, with semantic locators, ready to be cached (see `cache`).
+    pub recorded: Vec<Recorded>,
 }
 
 pub struct Context<'a> {
@@ -249,7 +252,11 @@ pub fn run_goal(
             context_text(ctx), truncate(&snap, 30000))}),
     ];
     let mut actions = Vec::new();
+    let mut recorded: Vec<Recorded> = Vec::new();
     let mut last_calls: Vec<String> = Vec::new();
+    // Snapshot the refs in `actions` were read from, so they can be turned into semantic
+    // locators (agent-browser refs are ephemeral and mean nothing in another run).
+    let mut known = snap.clone();
     for turn in 0..max_turns {
         compact_history(&mut msgs, 2);
         let reply = llm.chat(model, &msgs, Some(&tools))?;
@@ -270,13 +277,35 @@ pub fn run_goal(
                     verdict: v,
                     reason: tc.args["reason"].as_str().unwrap_or_default().to_string(),
                     actions,
+                    recorded,
                 });
             }
+            // The locator is read from the page as the agent sees it, before the action runs.
+            let loc = if let Some(r) = tc.args["ref"].as_str() {
+                let id = norm_ref(r);
+                if !known.contains(&id) {
+                    known = browser.snapshot(false).unwrap_or_default();
+                }
+                cache::locator_of(&known, &id)
+            } else {
+                None
+            };
+            let rec = recordable(&tc.name, &tc.args, loc);
             let result = exec_tool(browser, &tc.name, &tc.args, secret, resolve_url);
+            // Navigation invalidates every ref: the next one is read from a fresh snapshot.
+            if matches!(tc.name.as_str(), "open" | "back") {
+                known.clear();
+            }
             let text = match &result {
                 Ok(t) => t.clone(),
                 Err(e) => format!("ERROR: {e}"),
             };
+            // Only successful actions are recorded: a recording must replay the same way.
+            if result.is_ok() {
+                if let Some(r) = rec {
+                    recorded.push(r);
+                }
+            }
             let shown = if tc.name == "fill_secret" {
                 format!("fill_secret {} {}", tc.args["ref"], tc.args["name"])
             } else {
@@ -307,6 +336,50 @@ pub fn run_goal(
         verdict: Verdict::Blocked,
         reason: format!("STEP_BUDGET_EXHAUSTED after {max_turns} model turns"),
         actions,
+        recorded,
+    })
+}
+
+/// The cacheable form of a tool call, or `None` when it changes nothing in the browser (reading the
+/// page, judging) or when its target could not be located semantically.
+fn recordable(name: &str, a: &Value, loc: Option<cache::Locator>) -> Option<Recorded> {
+    let s = |k: &str| a[k].as_str().unwrap_or_default().to_string();
+    let need = |l: Option<cache::Locator>| l;
+    Some(match name {
+        "click" => Recorded::Click {
+            locator: need(loc)?,
+        },
+        "hover" => Recorded::Hover {
+            locator: need(loc)?,
+        },
+        "fill" => Recorded::Fill {
+            locator: need(loc)?,
+            text: s("text"),
+        },
+        "type_text" => Recorded::TypeText {
+            locator: loc,
+            text: s("text"),
+        },
+        "select" => Recorded::Select {
+            locator: need(loc)?,
+            value: s("value"),
+        },
+        "fill_secret" => Recorded::FillSecret {
+            locator: need(loc)?,
+            name: s("name"),
+        },
+        "press" => Recorded::Press { key: s("key") },
+        "scroll" => Recorded::Scroll {
+            direction: s("direction"),
+            pixels: a["pixels"].as_i64().unwrap_or(600),
+        },
+        "open" => Recorded::Open { url: s("url") },
+        "back" => Recorded::Back,
+        "wait" => Recorded::Wait {
+            text: a["text"].as_str().map(str::to_string),
+            ms: a["ms"].as_u64(),
+        },
+        _ => return None,
     })
 }
 
@@ -484,6 +557,7 @@ pub fn judge(
                 verdict,
                 reason,
                 actions: vec![],
+                recorded: vec![],
             });
         }
     }
@@ -491,6 +565,7 @@ pub fn judge(
         verdict: Verdict::Blocked,
         reason: "MODEL_OUTPUT_INVALID: judge did not answer JSON".into(),
         actions: vec![],
+        recorded: vec![],
     })
 }
 
