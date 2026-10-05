@@ -105,6 +105,9 @@ enum Cmd {
         cache: Option<String>,
         #[arg(short, long)]
         quiet: bool,
+        /// Output on stdout: `text` (default) or `json` (the full report; the text summary goes to stderr).
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
         /// Run suites in N browser sessions (threads), in parallel. Default: 1, one session.
         #[arg(short = 'j', long)]
         jobs: Option<usize>,
@@ -119,6 +122,20 @@ enum Cmd {
         env: Option<String>,
         #[arg(long = "set", value_name = "KEY=VALUE")]
         set: Vec<String>,
+    },
+    /// Read a finished run: summary, failed steps with evidence, or the raw JSON.
+    Report {
+        /// Report file (default: .qaspec/report.json next to qaspec.toml).
+        path: Option<PathBuf>,
+        /// Only show failed and blocked steps, with their failing checks.
+        #[arg(long)]
+        failed: bool,
+        /// Only show steps whose name contains this text (case-insensitive).
+        #[arg(long, value_name = "TEXT")]
+        step: Option<String>,
+        /// Print machine-readable JSON (the filtered report) instead of text.
+        #[arg(long)]
+        json: bool,
     },
     /// Create qaspec.toml and an example spec.
     Init,
@@ -462,6 +479,90 @@ fn real_main(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
+        Cmd::Report {
+            path,
+            failed,
+            step,
+            json,
+        } => {
+            let file = match path {
+                Some(p) => p,
+                None => find_config(cli.config)?
+                    .parent()
+                    .map(|d| d.join(".qaspec").join("report.json"))
+                    .unwrap_or_else(|| PathBuf::from(".qaspec/report.json")),
+            };
+            let raw = std::fs::read_to_string(&file).with_context(|| {
+                format!(
+                    "cannot read report {} (run `qaspec run` first)",
+                    file.display()
+                )
+            })?;
+            let mut rep: serde_json::Value = serde_json::from_str(&raw)?;
+            let needle = step.map(|t| t.to_lowercase());
+            if failed || needle.is_some() {
+                if let Some(suites) = rep["suites"].as_array_mut() {
+                    for su in suites.iter_mut() {
+                        if let Some(steps) = su["steps"].as_array_mut() {
+                            steps.retain(|st| {
+                                let status = st["status"].as_str().unwrap_or("");
+                                let by_status =
+                                    !failed || status == "failed" || status == "blocked";
+                                let by_name = needle.as_ref().map_or(true, |n| {
+                                    st["name"].as_str().unwrap_or("").to_lowercase().contains(n)
+                                });
+                                by_status && by_name
+                            });
+                        }
+                    }
+                    suites.retain(|su| su["steps"].as_array().is_some_and(|a| !a.is_empty()));
+                }
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rep)?);
+            } else {
+                println!(
+                    "run {} [{}] {}: {} passed, {} failed, {} blocked, {} skipped ({} model calls)",
+                    rep["runId"].as_str().unwrap_or("?"),
+                    rep["env"].as_str().unwrap_or("?"),
+                    rep["status"].as_str().unwrap_or("?"),
+                    rep["steps"]["passed"],
+                    rep["steps"]["failed"],
+                    rep["steps"]["blocked"],
+                    rep["steps"]["skipped"],
+                    rep["modelCalls"]
+                );
+                for su in rep["suites"].as_array().into_iter().flatten() {
+                    println!(
+                        "\n{} ({}) {}",
+                        su["suite"].as_str().unwrap_or("?"),
+                        su["file"].as_str().unwrap_or("?"),
+                        su["status"].as_str().unwrap_or("")
+                    );
+                    for st in su["steps"].as_array().into_iter().flatten() {
+                        println!(
+                            "  {} {}",
+                            st["status"].as_str().unwrap_or("?"),
+                            st["name"].as_str().unwrap_or("?")
+                        );
+                        if let Some(r) = st["reason"].as_str() {
+                            println!("      reason: {r}");
+                        }
+                        for it in st["items"].as_array().into_iter().flatten() {
+                            if it["status"] == "failed" || it["status"] == "blocked" {
+                                println!(
+                                    "      {} {}: {}",
+                                    it["status"].as_str().unwrap_or(""),
+                                    it["label"].as_str().unwrap_or(""),
+                                    it["detail"].as_str().unwrap_or("")
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(0)
+        }
         Cmd::Run {
             paths,
             env,
@@ -473,9 +574,13 @@ fn real_main(cli: Cli) -> Result<i32> {
             junit,
             cache,
             quiet,
+            format,
             jobs,
             force,
         } => {
+            if format != "text" && format != "json" {
+                bail!("--format must be `text` or `json`, got `{format}`");
+            }
             let mut set = set;
             if headed {
                 set.push("browser.headed=true".into());
@@ -512,7 +617,12 @@ fn real_main(cli: Cli) -> Result<i32> {
             } else {
                 run_parallel(&cfg, &planned, jobs, keep_open, quiet, cache_mode)?
             };
-            println!("{}", report.summary());
+            if format == "json" {
+                eprintln!("{}", report.summary());
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", report.summary());
+            }
             let json_path = json.unwrap_or_else(|| cfg.root.join(".qaspec").join("report.json"));
             if let Some(d) = json_path.parent() {
                 std::fs::create_dir_all(d)?;
