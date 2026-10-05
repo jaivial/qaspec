@@ -57,14 +57,39 @@ qaspec sits in between: **an agent that clicks like a person and inspects like a
 
 ## What it looks like
 
-| The agent's view | The report |
-|---|---|
-| <img src="assets/screenshots/agent-view.png" alt="The fixture app with agent-browser's numbered labels on each control" width="400"> | <img src="assets/screenshots/report.png" alt="The report of a run with the failing step expanded: console error and 500 response as evidence" width="400"> |
-| agent-browser numbers every control (`[2]` = ref `e2`). The agent reads the snapshot and acts by ref, while qaspec records console, errors and network for the step. | `.qaspec/report.json` rendered by the website: per-step verdicts, signal counts, evidence for every check, and the agent's actions. |
+These screenshots come from a real run against the demo app in [`tests/fixtures/app`](tests/fixtures/app).
+
+| 1. Sign in once | 2. Reach the goal | 3. Catch what looks fine |
+|---|---|---|
+| <img src="assets/screenshots/app-login-annotated.png" alt="Sign-in page with agent-browser's numbered labels on each control" width="300"> | <img src="assets/screenshots/app-todo-added.png" alt="Todo list with the item the agent added" width="300"> | <img src="assets/screenshots/app-broken.png" alt="Reports page that renders but throws and gets a 500" width="300"> |
+| agent-browser labels every control. The agent types the username and uses `fill_secret` for the password, so it never sees it. The session is saved for the next run. | For `goal('add a todo …')` the agent fills the input and presses Add. qaspec checks that `POST /api/todos` returned 201 and that no console error fired during the step. | The page looks fine, but its script throws and its API returns 500. `expect.console.noErrors()` fails the step. |
+
+The report of that run, rendered on the website, with the failing step expanded:
+
+<img src="assets/screenshots/report.png" alt="Report with per-step verdicts, signal counts, and the failing step showing a console error and a 500 response as evidence" width="760">
 
 `qaspec check` validates specs, config, identities and secrets without opening a browser:
 
-<img src="assets/screenshots/check.png" alt="qaspec check output listing suites by project and identity" width="720">
+<img src="assets/screenshots/check.png" alt="qaspec check output listing suites by project and identity" width="760">
+
+## How it compares
+
+<img src="assets/screenshots/compare.png" alt="Comparison table of qaspec, scripted E2E, e2e by TesterArmy and agent-browser alone" width="860">
+
+| | qaspec | Scripted E2E (Playwright, Cypress) | [e2e](https://github.com/tester-army/e2e) (TesterArmy) | agent-browser alone |
+|---|---|---|---|---|
+| What you write | Goals and expectations | Locators, waits, helpers | TypeScript with `agent.act` / `agent.assert` | Prompts to a coding agent |
+| Survives UI changes | Yes, the agent finds the control again | No, selectors break | Yes, plus a replay cache | If you re-prompt |
+| Judges the screen like a person | Yes, `expect('…')` quotes evidence | No | Yes, `agent.assert` | You read it |
+| Console errors per step | Yes, `expect.console.noErrors()` | Hand-written listeners | Hidden from the model | `console` command |
+| Network status per step | Yes, `expect.network(…).status(…)` | `waitForResponse` | Hidden from the model | `network requests` |
+| Browsers per run | 1 Chromium, one tab per project | A context per test, parallel workers | A context per test, parallel workers | One per session, by hand |
+| Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test + saved session | `state save` / `load` by hand |
+| Several dependent apps | `depends_on`, health checks, captures | Projects, by hand | Targets | No |
+| Runtime | One Rust binary + agent-browser | Node + browsers | Node 22.12+ + Playwright | agent-browser |
+| Model calls | Every goal and judged check (no replay cache yet) | None | Fewer after the first run | Every step |
+
+Based on the e2e 0.16 and agent-browser 0.27 docs, and on porting a real two-app suite. Corrections are welcome as issues.
 
 ## Install
 
@@ -195,6 +220,8 @@ cross-project captures with `needs` between files, and identity switching inside
 
 ## Website
 
+<img src="assets/screenshots/site.png" alt="The qaspec website on desktop" width="620"> <img src="assets/screenshots/site-mobile.png" alt="The qaspec website on a phone" width="150">
+
 The site in [`site/`](site/) is built with Svelte 5 and Vite, and deployed to GitHub Pages
 (`gh-pages` branch) by `.github/workflows/pages.yml`. It renders a real `report.json` and the run output
 from `site/src/data/`, and imports the example specs straight from the repo.
@@ -204,7 +231,7 @@ cd site && npm ci && npm run dev          # http://localhost:5173/qaspec/
 npm run build && npm run preview          # production build
 ```
 
-The README screenshots come from the site's `?shot=run|report|spec|check` views, captured with agent-browser
+The README screenshots come from the site's `?shot=run|report|spec|check|compare` views, captured with agent-browser
 (see [`site/README.md`](site/README.md)).
 
 ## Development

@@ -26,15 +26,15 @@
 </div>
 
 <style>
-  .term { background: #010409; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.45); display: flex; flex-direction: column; }
-  .bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  .bar span { width: 11px; height: 11px; border-radius: 50%; background: #484f58; }
-  .bar span:nth-child(1) { background: #ff5f57; } .bar span:nth-child(2) { background: #febc2e; } .bar span:nth-child(3) { background: #28c840; }
-  .bar em { font-style: normal; color: var(--muted); font: 12px var(--mono); margin-left: 8px; }
-  pre { margin: 0; padding: 16px 18px; font: 13px/1.6 var(--mono); overflow: auto; flex: 1; }
-  pre div { white-space: pre-wrap; word-break: break-word; }
-  .cmd { color: var(--text); font-weight: 600; }
-  .suite { color: var(--accent2); font-weight: 600; margin-top: 4px; }
-  .ok { color: var(--accent); } .bad { color: var(--bad); } .warn { color: var(--warn); } .muted { color: var(--muted); }
-  .strong { font-weight: 700; margin-top: 4px; }
+  .term { background: #07090b; border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 1px var(--border), 0 8px 24px rgb(0 0 0 / 0.35); display: flex; flex-direction: column; min-width: 0; }
+  .bar { display: flex; align-items: center; gap: 7px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .bar span { width: 10px; height: 10px; border-radius: 50%; background: var(--overlay); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .bar em { font: 12px var(--mono); font-style: normal; color: var(--text-3); margin-left: 6px; }
+  pre { margin: 0; padding: 14px 16px; font: 12.5px/1.65 var(--mono); overflow: auto; flex: 1; -webkit-overflow-scrolling: touch; }
+  @media (max-width: 640px) { pre { font-size: 11.5px; padding: 12px; } }
+  pre div { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cmd { color: var(--text); }
+  .suite { color: var(--link); font-weight: 500; margin-top: 4px; }
+  .ok { color: var(--accent); } .bad { color: var(--bad); } .warn { color: var(--warn); } .muted { color: var(--text-3); }
+  .strong { font-weight: 500; margin-top: 4px; }
 </style>

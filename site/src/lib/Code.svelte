@@ -30,10 +30,11 @@
 </div>
 
 <style>
-  .code { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .title { font: 12px var(--mono); color: var(--muted); padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel2); }
-  pre { margin: 0; padding: 16px 18px; overflow: auto; font: 13px/1.6 var(--mono); }
-  pre :global(.c) { color: var(--muted); } pre :global(.s) { color: var(--str); } pre :global(.kw) { color: var(--kw); }
-  pre :global(.f) { color: var(--violet); } pre :global(.n) { color: #79c0ff; } pre :global(.h) { color: var(--accent); font-weight: 600; }
-  pre :global(.k) { color: #79c0ff; }
+  .code { background: var(--surface); border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 1px var(--border); min-width: 0; }
+  .title { font: 12px var(--mono); color: var(--text-3); padding: 9px 16px; border-bottom: 1px solid var(--border); background: var(--raised); }
+  pre { margin: 0; padding: 14px 16px; overflow: auto; font: 12.5px/1.65 var(--mono); -webkit-overflow-scrolling: touch; }
+  @media (max-width: 640px) { pre { font-size: 11.5px; padding: 12px; } }
+  pre :global(.c) { color: var(--text-3); } pre :global(.s) { color: var(--code-str); } pre :global(.kw) { color: var(--code-kw); }
+  pre :global(.f) { color: var(--code-fn); } pre :global(.n) { color: var(--code-num); } pre :global(.h) { color: var(--accent); }
+  pre :global(.k) { color: var(--code-num); }
 </style>

@@ -12,6 +12,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   specs from the repo. The old static `docs/` page is gone, and it never got deployed.
 - README and website show screenshots of a real run, the report, `qaspec check` and the agent's
   annotated view (`assets/screenshots/`).
+- Website redesign: a neutral palette with four surface levels, one green accent for the primary action
+  and passing states, and text colors that meet WCAG AA on every surface. IBM Plex Sans and JetBrains
+  Mono are self-hosted. Decorative cards and the window-chrome colors are gone.
+- Mobile: a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
+  stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
+- New "How it compares" tables (writing tests, what a check can see, running them) against scripted
+  E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
+- New screenshots of the three things the agent does (sign in, reach a goal, catch a page that looks
+  fine) and of the back-office app. Images ship as WebP with PNG fallback.
+- The demo app in `tests/fixtures/app` has a plain stylesheet, so its screenshots look like a real app.
 
 ### Fixed
 - The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at

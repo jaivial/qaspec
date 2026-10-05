@@ -19,8 +19,18 @@ def todos():
 def add_todo(text):
     t = todos(); t.append(text); json.dump(t, open(DB, "w"))
 
-PAGE = """<!doctype html><html><head><title>{title}</title></head><body>
-<nav><a href="/">Home</a> <a href="/todos">Todos</a> <a href="/broken">Broken</a> <a href="/logout">Log out</a></nav>
+CSS = """body{margin:0;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#1f2328;background:#f6f8fa}
+nav{display:flex;gap:20px;align-items:center;padding:0 32px;height:52px;background:#fff;border-bottom:1px solid #d0d7de}
+nav b{margin-right:16px}nav a{color:#57606a;text-decoration:none}nav a:hover{color:#1f2328}
+main{max-width:640px;margin:32px auto;padding:24px 28px;background:#fff;border:1px solid #d0d7de;border-radius:8px}
+h1{font-size:22px;margin:0 0 12px}label{display:block;margin:12px 0 4px;color:#57606a;font-size:13px}
+input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;font:inherit;border:1px solid #d0d7de;border-radius:6px}
+button{margin-top:14px;padding:8px 16px;font:inherit;font-weight:600;color:#fff;background:#1f883d;border:0;border-radius:6px}
+ul{padding:0;list-style:none;margin:0 0 8px}li{padding:10px 0;border-bottom:1px solid #eaeef2}
+[role=alert]{color:#cf222e}"""
+
+PAGE = """<!doctype html><html><head><title>{title}</title><style>""" + CSS.replace("{", "{{").replace("}", "}}") + """</style></head><body>
+<nav><b>Todo demo</b><a href="/">Home</a> <a href="/todos">Todos</a> <a href="/broken">Broken</a> <a href="/logout">Log out</a></nav>
 <main>{body}</main></body></html>"""
 
 LOGIN = """<h1>Sign in</h1><form method="post" action="/login">

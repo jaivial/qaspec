@@ -1,13 +1,54 @@
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
+@import '@fontsource/jetbrains-mono/latin-400.css';
+@import '@fontsource/jetbrains-mono/latin-500.css';
+
+/* One neutral ramp (surface levels ~3% L apart), three text levels, translucent borders,
+   one accent (green) for the primary action, "passed" and selection. Red/amber = status only. */
 :root {
-  --bg: #0d1117; --panel: #161b22; --panel2: #1c2128; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
-  --accent: #3fb950; --accent2: #58a6ff; --warn: #d29922; --bad: #f85149; --violet: #d2a8ff; --str: #a5d6ff; --kw: #ff7b72;
-  --mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  --bg: #0b0d10;
+  --surface: #12151a;
+  --raised: #181c22;
+  --overlay: #1f242c;
+  --text: #e8ebef;
+  --text-2: #9ba3ae;
+  --text-3: #838b97;
+  --border: rgb(255 255 255 / 0.09);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --accent: #3fb950;
+  --accent-ink: #062b10;
+  --link: #79b8ff;
+  --bad: #f47067;
+  --warn: #d4a72c;
+  --code-str: #a5d6ff;
+  --code-fn: #d2a8ff;
+  --code-kw: #f47067;
+  --code-num: #79c0ff;
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { scroll-padding-top: 70px; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-a { color: var(--accent2); text-decoration: none; }
+html { scroll-padding-top: 72px; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 400 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+h1, h2, h3 { text-wrap: balance; }
+p { text-wrap: pretty; }
+a { color: var(--link); text-decoration: none; text-underline-offset: 3px; }
 a:hover { text-decoration: underline; }
-code { font-family: var(--mono); font-size: .9em; background: rgba(110,118,129,.2); padding: .1em .35em; border-radius: 4px; }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--overlay); padding: 0.12em 0.4em; border-radius: 4px; }
+img { max-width: 100%; height: auto; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 4px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+@media (min-width: 768px) { .wrap { padding: 0 32px; } }
+.num { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
