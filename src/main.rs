@@ -1,0 +1,378 @@
+mod agent;
+mod browser;
+mod config;
+mod llm;
+mod report;
+mod runner;
+mod spec;
+
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
+use config::{Config, Overrides};
+use std::path::{Path, PathBuf};
+
+const INIT_CONFIG: &str = r#"# qaspec configuration — https://github.com/jaivial/qaspec
+default_env = "local"
+
+[projects.app]
+specs = "specs/**/*.qa.ts"
+# health = "/api/health"           # if it fails, the project's suites are `blocked`
+[projects.app.env.local]
+base_url = "http://localhost:3000"
+# [projects.app.env.dev]
+# base_url = "https://dev.example.com"
+
+# [projects.app.identities.user]
+# username = "qa@example.com"
+# password = { file = "~/.config/qaspec/app-password" }   # or { env = "APP_PASSWORD" }
+# valid_if = { url_not = "/login" }
+# login = "specs/_login.qa.ts"     # optional; without it the agent signs in by itself
+
+[params]
+# search_term = "blue mug"
+
+[llm]
+# Any OpenAI-compatible endpoint that supports tool calls.
+base_url = "https://api.openai.com/v1"
+api_key = { env = "OPENAI_API_KEY" }
+actor = "gpt-4.1-mini"
+# judge = "gpt-4.1-mini"
+"#;
+
+const INIT_SPEC: &str = r#"import { suite, step, goal, expect } from 'qaspec';
+
+suite('home page', { start: '/' }, () => {
+  step('loads cleanly', () => {
+    expect.console.noErrors();
+    expect.network.noFailures();
+  });
+
+  step('main navigation works', () => {
+    goal('open the first link of the main navigation');
+    expect('a different page with its own content is shown');
+    expect.errors.none();
+  });
+});
+"#;
+
+#[derive(Parser)]
+#[command(
+    name = "qaspec",
+    version,
+    about = "Agentic E2E specs driven by agent-browser"
+)]
+struct Cli {
+    /// Path to qaspec.toml (default: search upwards from the current directory).
+    #[arg(short, long, global = true)]
+    config: Option<PathBuf>,
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run specs in one browser session.
+    Run {
+        /// Spec files or directories (default: every project's `specs` glob).
+        paths: Vec<PathBuf>,
+        /// Environment (overrides default_env and QASPEC_ENV).
+        #[arg(short, long)]
+        env: Option<String>,
+        /// Only run suites of this project (dependencies are still health-checked).
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Override a value: params.<name>=v, projects.<p>.base_url=u, llm.actor=m, browser.headed=true.
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+        /// Keep the browser open after the run and reuse it next time (session `qaspec-<env>`).
+        #[arg(long)]
+        keep_open: bool,
+        /// Show the browser window.
+        #[arg(long)]
+        headed: bool,
+        /// Write the JSON report here (default: .qaspec/report.json).
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Also write a JUnit XML report.
+        #[arg(long)]
+        junit: Option<PathBuf>,
+        #[arg(short, long)]
+        quiet: bool,
+    },
+    /// Parse specs and validate config without opening a browser.
+    Check {
+        paths: Vec<PathBuf>,
+        #[arg(short, long)]
+        env: Option<String>,
+        #[arg(long = "set", value_name = "KEY=VALUE")]
+        set: Vec<String>,
+    },
+    /// Create qaspec.toml and an example spec.
+    Init,
+    /// Manage saved authentication state.
+    State {
+        #[command(subcommand)]
+        op: StateOp,
+    },
+}
+
+#[derive(Subcommand)]
+enum StateOp {
+    /// List saved identities.
+    List,
+    /// Delete saved state (all, or one project / project.identity).
+    Clear { target: Option<String> },
+}
+
+fn find_config(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p);
+    }
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let c = dir.join("qaspec.toml");
+        if c.exists() {
+            return Ok(c);
+        }
+        if !dir.pop() {
+            bail!("no qaspec.toml found (run `qaspec init`)");
+        }
+    }
+}
+
+fn overrides(env: Option<String>, set: &[String]) -> Result<Overrides> {
+    let mut o = Overrides { env, set: vec![] };
+    for s in set {
+        let (k, v) = s
+            .split_once('=')
+            .with_context(|| format!("--set {s}: expected KEY=VALUE"))?;
+        o.set.push((k.trim().to_string(), v.to_string()));
+    }
+    Ok(o)
+}
+
+fn load_all(cfg: &Config, paths: &[PathBuf]) -> Result<Vec<spec::SpecFile>> {
+    let files = runner::discover(cfg, paths)?;
+    if files.is_empty() {
+        bail!("no spec files found");
+    }
+    let mut errors = Vec::new();
+    let mut specs = Vec::new();
+    for f in &files {
+        match runner::load_spec(f, &cfg.root) {
+            Ok(s) => specs.push(s),
+            Err(e) => errors.push(format!("{e:#}")),
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+    Ok(specs)
+}
+
+fn check_identities(cfg: &Config, planned: &[runner::Planned]) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    for p in planned {
+        let mut refs = vec![(p.project.clone(), p.suite.identity.clone())];
+        for s in &p.suite.steps {
+            if s.project.is_some() || s.identity.is_some() {
+                refs.push((
+                    s.project.clone().unwrap_or_else(|| p.project.clone()),
+                    s.identity.clone(),
+                ));
+            }
+        }
+        for (proj, id) in refs {
+            let pr = cfg
+                .project(&proj)
+                .with_context(|| format!("{} › {}", p.file, p.suite.name))?;
+            if let Some(id) = id {
+                let ident = pr.identities.get(&id).with_context(|| {
+                    format!(
+                        "{} › {}: project `{proj}` has no identity `{id}`",
+                        p.file, p.suite.name
+                    )
+                })?;
+                if let Some(l) = &ident.login {
+                    let lp = cfg.root.join(l);
+                    runner::load_spec(&lp, &cfg.root)
+                        .with_context(|| format!("login spec of {proj}/{id}"))?;
+                }
+                for (name, s) in &ident.secrets {
+                    if let Err(e) = s.read(&cfg.root) {
+                        warnings.push(format!("secret {proj}.{id}.{name} ({}): {e}", s.describe()));
+                    }
+                }
+            }
+        }
+        if p.suite.has_llm_work() && cfg.llm.is_none() {
+            warnings.push(format!(
+                "{} › {}: has goals/judged expectations but there is no [llm] section",
+                p.file, p.suite.name
+            ));
+        }
+    }
+    warnings.sort();
+    warnings.dedup();
+    Ok(warnings)
+}
+
+fn main() {
+    let cli = Cli::parse();
+    match real_main(cli) {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            std::process::exit(3);
+        }
+    }
+}
+
+fn real_main(cli: Cli) -> Result<i32> {
+    match cli.cmd {
+        Cmd::Init => {
+            if Path::new("qaspec.toml").exists() {
+                bail!("qaspec.toml already exists");
+            }
+            std::fs::write("qaspec.toml", INIT_CONFIG)?;
+            std::fs::create_dir_all("specs")?;
+            if !Path::new("specs/home.qa.ts").exists() {
+                std::fs::write("specs/home.qa.ts", INIT_SPEC)?;
+            }
+            let gi = Path::new(".gitignore");
+            let cur = std::fs::read_to_string(gi).unwrap_or_default();
+            if !cur.lines().any(|l| l.trim() == ".qaspec/") {
+                std::fs::write(
+                    gi,
+                    format!(
+                        "{cur}{}.qaspec/\n",
+                        if cur.is_empty() || cur.ends_with('\n') {
+                            ""
+                        } else {
+                            "\n"
+                        }
+                    ),
+                )?;
+            }
+            println!("created qaspec.toml, specs/home.qa.ts and added .qaspec/ to .gitignore");
+            Ok(0)
+        }
+        Cmd::State { op } => {
+            let cfg = Config::load(&find_config(cli.config)?, &Overrides::default())?;
+            let root = cfg.root.join(".qaspec").join("state");
+            match op {
+                StateOp::List => {
+                    for e in glob::glob(&format!("{}/*/*.json", root.display()))?.flatten() {
+                        let env = e
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        println!(
+                            "{env}\t{}",
+                            e.file_stem()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        );
+                    }
+                }
+                StateOp::Clear { target } => {
+                    let mut n = 0;
+                    for e in glob::glob(&format!("{}/*/*.json", root.display()))?.flatten() {
+                        let stem = e
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let hit = match &target {
+                            None => true,
+                            Some(t) if t.contains('.') => &stem == t,
+                            Some(t) => stem.split('.').next() == Some(t.as_str()),
+                        };
+                        if hit {
+                            std::fs::remove_file(&e)?;
+                            n += 1;
+                        }
+                    }
+                    println!("removed {n} saved state file(s)");
+                }
+            }
+            Ok(0)
+        }
+        Cmd::Check { paths, env, set } => {
+            let cfg = Config::load(&find_config(cli.config)?, &overrides(env, &set)?)?;
+            let specs = load_all(&cfg, &paths)?;
+            let planned = runner::plan(&cfg, &specs)?;
+            let warnings = check_identities(&cfg, &planned)?;
+            for w in &warnings {
+                eprintln!("warning: {w}");
+            }
+            let steps: usize = planned.iter().map(|p| p.suite.steps.len()).sum();
+            println!(
+                "ok — env `{}`, {} file(s), {} suite(s), {} step(s)",
+                cfg.env,
+                specs.len(),
+                planned.len(),
+                steps
+            );
+            for p in &planned {
+                println!(
+                    "  {} › {}  [{}{}] {} step(s)",
+                    p.file,
+                    p.suite.name,
+                    p.project,
+                    p.suite
+                        .identity
+                        .as_ref()
+                        .map(|i| format!(" as {i}"))
+                        .unwrap_or_default(),
+                    p.suite.steps.len()
+                );
+            }
+            Ok(0)
+        }
+        Cmd::Run {
+            paths,
+            env,
+            project,
+            set,
+            keep_open,
+            headed,
+            json,
+            junit,
+            quiet,
+        } => {
+            let mut set = set;
+            if headed {
+                set.push("browser.headed=true".into());
+            }
+            let cfg = Config::load(&find_config(cli.config)?, &overrides(env, &set)?)?;
+            let specs = load_all(&cfg, &paths)?;
+            let mut planned = runner::plan(&cfg, &specs)?;
+            if let Some(p) = &project {
+                cfg.project(p)?;
+                planned.retain(|x| &x.project == p);
+            }
+            if planned.is_empty() {
+                bail!("nothing to run");
+            }
+            for w in check_identities(&cfg, &planned)? {
+                eprintln!("warning: {w}");
+            }
+            let mut r = runner::Runner::new(&cfg, runner::RunOptions { keep_open, quiet })?;
+            let report = r.run(&planned)?;
+            println!("{}", report.summary());
+            let json_path = json.unwrap_or_else(|| cfg.root.join(".qaspec").join("report.json"));
+            if let Some(d) = json_path.parent() {
+                std::fs::create_dir_all(d)?;
+            }
+            std::fs::write(&json_path, serde_json::to_string_pretty(&report)?)?;
+            if let Some(j) = junit {
+                std::fs::write(&j, report.junit())?;
+            }
+            if !quiet {
+                eprintln!("report: {}", json_path.display());
+            }
+            Ok(report.exit_code)
+        }
+    }
+}

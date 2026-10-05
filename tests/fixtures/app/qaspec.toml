@@ -1,0 +1,36 @@
+# Integration fixture: two projects on localhost, one identity, deterministic login spec.
+default_env = "local"
+
+[projects.app]
+specs = "specs/app-*.qa.ts"
+health = "/health"
+[projects.app.env.local]
+base_url = "http://127.0.0.1:18731"
+[projects.app.identities.qa]
+username = "qa@example.com"
+password = { env = "QASPEC_FIXTURE_PASSWORD" }
+login = "specs/_login.qa.ts"
+valid_if = { url_not = "/login" }
+
+[projects.app.identities.viewer]
+username = "viewer@example.com"
+password = { value = "v1ewer-pass" }
+login = "specs/_login.qa.ts"
+valid_if = { url_not = "/login" }
+
+[projects.admin]
+specs = "specs/admin-*.qa.ts"
+depends_on = ["app"]
+health = "/health"
+[projects.admin.env.local]
+base_url = "http://127.0.0.1:18732"
+
+[params]
+todo = "Write qaspec docs"
+
+[llm]
+# Point it at any OpenAI-compatible endpoint with tool calls:
+#   QASPEC_LLM_KEY=... qaspec run --set llm.base_url=http://host:port/v1 --set llm.actor=<model>
+base_url = "https://api.openai.com/v1"
+api_key = { env = "QASPEC_LLM_KEY" }
+actor = "gpt-4.1-mini"

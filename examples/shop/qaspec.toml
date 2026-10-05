@@ -1,0 +1,38 @@
+# Example: a storefront and its back office, two projects that depend on each other.
+default_env = "local"
+
+[projects.store]
+specs  = "specs/store/**/*.qa.ts"
+health = "/api/health"
+locale = "en-US"
+[projects.store.env.local]
+base_url = "http://localhost:3000"
+[projects.store.env.staging]
+base_url = "https://staging.shop.example.com"
+
+[projects.store.identities.buyer]
+username = "buyer@example.com"
+password = { env = "SHOP_BUYER_PASSWORD" }
+login    = "specs/store/_login.qa.ts"
+valid_if = { url_not = "/login" }
+
+[projects.backoffice]
+specs      = "specs/backoffice/**/*.qa.ts"
+depends_on = ["store"]
+[projects.backoffice.env.local]
+base_url = "http://localhost:4000"
+[projects.backoffice.env.staging]
+base_url = "https://admin.staging.shop.example.com"
+
+[projects.backoffice.identities.admin]
+username = "admin@example.com"
+password = { file = "~/.config/qaspec/shop-admin-password" }
+valid_if = { url_not = "/login" }          # no login spec: the agent signs in by itself
+
+[params]
+product = "Blue mug"
+
+[llm]
+base_url = "https://api.openai.com/v1"
+api_key  = { env = "OPENAI_API_KEY" }
+actor    = "gpt-4.1-mini"

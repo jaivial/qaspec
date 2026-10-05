@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: qaspec check on the fixture and examples
+        run: |
+          cargo build
+          (cd tests/fixtures/app && QASPEC_FIXTURE_PASSWORD=x ../../../target/debug/qaspec check)
+          (cd examples/shop && ../../target/debug/qaspec check)
