@@ -3,6 +3,7 @@ mod browser;
 mod cache;
 mod config;
 mod llm;
+mod parallel;
 mod report;
 mod runner;
 mod spec;
@@ -104,6 +105,12 @@ enum Cmd {
         cache: Option<String>,
         #[arg(short, long)]
         quiet: bool,
+        /// Run suites in N browser sessions (threads), in parallel. Default: 1, one session.
+        #[arg(short = 'j', long)]
+        jobs: Option<usize>,
+        /// Skip the memory guard that lowers --jobs to what the machine can afford.
+        #[arg(long)]
+        force: bool,
     },
     /// Parse specs and validate config without opening a browser.
     Check {
@@ -221,6 +228,90 @@ fn check_identities(cfg: &Config, planned: &[runner::Planned]) -> Result<Vec<Str
     warnings.sort();
     warnings.dedup();
     Ok(warnings)
+}
+
+/// Runs the planned suites in `jobs` browser sessions, one thread each, and merges their reports.
+fn run_parallel(
+    cfg: &Config,
+    planned: &[runner::Planned],
+    jobs: usize,
+    keep_open: bool,
+    quiet: bool,
+    cache_mode: CacheMode,
+) -> Result<report::Report> {
+    let groups = parallel::partition(cfg, planned, jobs)?;
+    parallel::assert_disjoint_identities(cfg, &groups, planned)?;
+    let total = groups.len();
+    let run_id = new_run_id();
+    let wall = std::time::Instant::now();
+    let mut handles = Vec::new();
+    for (w, g) in groups.into_iter().enumerate() {
+        let cfg_owned = cfg.clone();
+        let mine: Vec<runner::Planned> = g.into_iter().map(|i| planned[i].clone()).collect();
+        let id = run_id.clone();
+        handles.push(std::thread::spawn(
+            move || -> Result<(report::Report, Vec<String>)> {
+                let mut r = runner::Runner::new(
+                    &cfg_owned,
+                    runner::RunOptions {
+                        keep_open,
+                        quiet,
+                        cache: cache_mode,
+                        session_suffix: format!("-w{w}"),
+                    },
+                    runner::Output::Buffered,
+                    Some(&id),
+                )?;
+                let rep = r.run(&mine)?;
+                Ok((rep, r.take_buffer()))
+            },
+        ));
+    }
+    let mut reports: Vec<Option<report::Report>> = (0..total).map(|_| None).collect();
+    for (w, h) in handles.into_iter().enumerate() {
+        let (rep, left) = h
+            .join()
+            .map_err(|_| anyhow::anyhow!("worker {w} panicked"))??;
+        for l in left {
+            eprintln!("[w{w}] {l}");
+        }
+        reports[w] = Some(rep);
+    }
+    let mut merged = report::Report::new(
+        &run_id,
+        &cfg.env,
+        &reports[0].as_ref().unwrap().browser_session,
+    );
+    // One entry per worker session, in worker order (Report::new seeded it with the first one).
+    merged.browser_sessions.clear();
+    for r in reports.into_iter().flatten() {
+        merged.browser_sessions.extend(r.browser_sessions);
+        merged.browser_calls += r.browser_calls;
+        merged.model_calls += r.model_calls;
+        merged.tokens += r.tokens;
+        merged.suites.extend(r.suites);
+    }
+    // Every suite keeps its plan position in the merged report.
+    merged.suites.sort_by_key(|s| {
+        planned
+            .iter()
+            .position(|p| p.file == s.file && p.suite.name == s.suite)
+            .unwrap_or(usize::MAX)
+    });
+    merged.duration_ms = wall.elapsed().as_millis() as u64;
+    merged.finish();
+    Ok(merged)
+}
+
+fn new_run_id() -> String {
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            % 0xffff_ffff
+    )
 }
 
 fn main() {
@@ -382,6 +473,8 @@ fn real_main(cli: Cli) -> Result<i32> {
             junit,
             cache,
             quiet,
+            jobs,
+            force,
         } => {
             let mut set = set;
             if headed {
@@ -404,15 +497,21 @@ fn real_main(cli: Cli) -> Result<i32> {
                 Some(c) => c.parse()?,
                 None => CacheMode::Auto,
             };
-            let mut r = runner::Runner::new(
-                &cfg,
-                runner::RunOptions {
-                    keep_open,
-                    quiet,
-                    cache: cache_mode,
-                },
-            )?;
-            let report = r.run(&planned)?;
+            let (jobs, guard_warning) = parallel::guard(jobs.unwrap_or(1), force)?;
+            if !guard_warning.is_empty() {
+                eprintln!("{guard_warning}");
+            }
+            let report = if jobs <= 1 {
+                let mut r = runner::Runner::new(
+                    &cfg,
+                    runner::RunOptions::single(keep_open, quiet, cache_mode),
+                    runner::Output::Direct,
+                    None,
+                )?;
+                r.run(&planned)?
+            } else {
+                run_parallel(&cfg, &planned, jobs, keep_open, quiet, cache_mode)?
+            };
             println!("{}", report.summary());
             let json_path = json.unwrap_or_else(|| cfg.root.join(".qaspec").join("report.json"));
             if let Some(d) = json_path.parent() {

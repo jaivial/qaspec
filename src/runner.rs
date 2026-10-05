@@ -19,6 +19,34 @@ pub struct RunOptions {
     pub quiet: bool,
     /// Replay cache: `auto` replays and records, `strict` fails on a missing recording, `off` off.
     pub cache: CacheMode,
+    /// Added to the agent-browser session name: `-w0`, `-w1`, ... when running with `--jobs N`.
+    pub session_suffix: String,
+}
+
+impl RunOptions {
+    pub fn single(keep_open: bool, quiet: bool, cache: CacheMode) -> Self {
+        RunOptions {
+            keep_open,
+            quiet,
+            cache,
+            session_suffix: String::new(),
+        }
+    }
+}
+
+/// Where a worker's terminal output goes. With one worker lines are printed straight away
+/// (unchanged behaviour); with `--jobs N` the lines of a suite are buffered and printed as one
+/// block, prefixed, when the suite ends, so two workers never interleave mid-line.
+#[derive(Clone)]
+pub enum Output {
+    Direct,
+    Buffered,
+}
+
+impl Output {
+    fn is_buffered(&self) -> bool {
+        matches!(self, Output::Buffered)
+    }
 }
 
 pub struct Runner<'a> {
@@ -44,6 +72,9 @@ pub struct Runner<'a> {
     /// empty on desktop.
     device_note: Option<String>,
     opts: RunOptions,
+    out: Output,
+    /// Lines of the current suite when running with `--jobs N`.
+    buffer: Vec<String>,
 }
 
 /// The result of a goal: its outcome, plus what the replay cache had to say about it.
@@ -167,7 +198,7 @@ fn emulation_of(cfg: &Config, p: &Planned) -> Option<Emulation> {
 /// the browser, losing every tab and every cookie. So a device suite has to be the last one in
 /// the session. `set viewport` only resizes the window, which qaspec does restore, so a suite
 /// with only a `viewport` is harmless anywhere in the run.
-fn is_device_suite(cfg: &Config, p: &Planned) -> bool {
+pub fn is_device_suite(cfg: &Config, p: &Planned) -> bool {
     emulation_of(cfg, p).is_some_and(|e| e.device.is_some())
 }
 
@@ -377,19 +408,27 @@ pub fn interpolate(
 }
 
 impl<'a> Runner<'a> {
-    pub fn new(cfg: &'a Config, opts: RunOptions) -> Result<Self> {
-        let run_id = format!(
-            "{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis()
-                % 0xffff_ffff
-        );
+    pub fn new(
+        cfg: &'a Config,
+        opts: RunOptions,
+        out: Output,
+        run_id: Option<&str>,
+    ) -> Result<Self> {
+        let run_id = run_id.map(|r| r.to_string()).unwrap_or_else(|| {
+            format!(
+                "{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    % 0xffff_ffff
+            )
+        });
         let session = cfg.browser.session.clone().unwrap_or_else(|| {
             if opts.keep_open {
-                format!("qaspec-{}", cfg.env)
+                format!("qaspec-{}{}", cfg.env, opts.session_suffix)
             } else {
-                format!("qaspec-{run_id}")
+                format!("qaspec-{run_id}{}", opts.session_suffix)
             }
         });
         let owns = !opts.keep_open && cfg.browser.session.is_none();
@@ -418,14 +457,45 @@ impl<'a> Runner<'a> {
             cache: Cache::new(&cfg.root, &cfg.env, opts.cache),
             emulation: None,
             device_note: None,
+            out,
+            buffer: Vec::new(),
             opts,
         })
     }
 
-    fn say(&self, s: &str) {
-        if !self.opts.quiet {
+    fn say(&mut self, s: &str) {
+        if self.opts.quiet {
+            return;
+        }
+        if self.out.is_buffered() {
+            self.buffer.push(s.to_string());
+        } else {
             eprintln!("{s}");
         }
+    }
+
+    /// Prints (and clears) whatever this worker buffered for the suite that just ended.
+    fn flush_output(&mut self) {
+        if !self.out.is_buffered() || self.opts.quiet {
+            return;
+        }
+        let prefix = self.worker_prefix();
+        for l in self.buffer.drain(..) {
+            eprintln!("{prefix} {l}");
+        }
+    }
+
+    fn worker_prefix(&self) -> String {
+        if self.opts.session_suffix.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", self.opts.session_suffix.trim_start_matches('-'))
+        }
+    }
+
+    /// Whatever is still buffered (used by the caller when a worker fails mid-suite).
+    pub fn take_buffer(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.buffer)
     }
 
     pub fn run(&mut self, planned: &[Planned]) -> Result<Report> {
@@ -449,6 +519,7 @@ impl<'a> Runner<'a> {
             let r = self.run_suite(p);
             report.suites.append(&mut self.setup_results);
             report.suites.push(r);
+            self.flush_output();
         }
         if !self.opts.keep_open {
             self.browser.close();

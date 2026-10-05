@@ -37,6 +37,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   without a `device` still runs at desktop size, with the desktop user agent, still signed in.
 - The demo app in `tests/fixtures/app` serves `<meta name="viewport">`, so its mobile layout is the
   real one instead of the 980px fallback browsers use when the tag is missing.
+- `qaspec run --jobs N`: opt-in parallel runs (default 1, unchanged). The planned suites are split
+  into N independent groups balanced by number of steps; each worker gets its own `Runner`, its own
+  agent-browser session (`qaspec-<run>-w0`, `-w1`, ...), its own LLM client and a `std::thread` (no
+  async runtime). Suites stay in the same worker when they share a `(project, identity)`, when their
+  projects are connected by `depends_on` or by a step that switches `project:` and use the same
+  identity, or when one captures a value that a later suite uses as `${name}`; each worker keeps plan
+  order, and qaspec asserts that two workers never write the state file of the same identity.
+- Memory guard for `--jobs`: reads `MemAvailable` from `/proc/meminfo`, assumes 1536 MiB per browser
+  session and keeps 2 GiB free, lowering `--jobs` to what fits and printing a warning.
+  `--force` skips the check; systems without `/proc/meminfo` skip it with a warning.
+- With more than one session, each suite's terminal lines are buffered and printed when the suite
+  ends, prefixed with `[w<i>]`, so workers never interleave mid-line. The report keeps every suite in
+  plan order, the summary says "N browser sessions", and the JSON report gains a `browserSessions`
+  array (`browserSession` is still the first session, so `report-1` readers keep working).
+- With `--jobs`, every suite that sets a `device` runs in the first worker and last in it:
+  agent-browser 0.27 cannot undo the mobile user agent, so two workers can each run one safely,
+  but a desktop suite after a device suite in the same worker could not.
 
 ### Changed
 - The website is now a Svelte 5 + Vite app in `site/`, deployed from the `gh-pages` branch. It renders
@@ -50,9 +67,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Mobile: 20px page gutters (sections had lost their side padding), a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
   stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
 - A yes/no comparison table of qaspec, regular E2E and agentic E2E (TesterArmy), on the website and
-  in the README. It includes the rows where qaspec loses: no parallel workers, no native mobile apps
-  (mobile *web* is now covered by device emulation). On phones it stays a three-column table with
-  short headers.
+- A yes/no comparison table of qaspec, regular E2E and agentic E2E (TesterArmy), on the website and
+  in the README. It includes the rows where qaspec loses: no native mobile apps (mobile *web* is
+  covered by device emulation). On phones it stays a three-column table with short headers.
 - The detailed comparison now says that e2e sessions last one run and are never reused across runs.
 - New "How it compares" tables (writing tests, what a check can see, running them) against scripted
   E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
