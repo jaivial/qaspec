@@ -27,7 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the spec, `device` / `viewport` in `[projects.<p>]`, or a default in `[browser]`; precedence is
   suite > project > browser and `qaspec check` prints what each suite will run on. The device is
   applied before the suite's first step (on the tab that suite drives, since agent-browser applies
-  emulation per target). The agent is told `Viewport: iPhone 14, 390x844, mobile user agent`, so it
+  emulation per target) and fully undone after the suite, so a run mixing a phone suite with a
+  desktop one works. The agent is told `Viewport: iPhone 14, 390x844, mobile user agent`, so it
   scrolls and opens menus as on a phone. Unknown option errors keep the `file:line:col` style.
   `--set browser.device=<name>` and `--set projects.<p>.device=<name>` too.
 - `tests/fixtures/app/specs/app-mobile.qa.ts`: a deterministic mobile suite (no model call) that
@@ -64,6 +65,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 - The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at
   viewport coordinates, so off-screen elements were missed with no error.
+- A device's mobile user agent no longer leaks into later suites. agent-browser 0.27 has no way to
+  undo `set device` (no desktop device name, and the user-agent override survives `set viewport`),
+  so a suite without a `device` that ran after a mobile one was still served `... iPhone ...` at the
+  restored window size. qaspec now also drops the override with `--user-agent ""` on every tab the
+  run emulated. See `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts`.
 
 ## [0.1.0] - 2026-10-05
 

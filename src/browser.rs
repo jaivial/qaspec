@@ -31,6 +31,9 @@ pub struct Browser {
     /// The window size the browser had before qaspec emulated anything: agent-browser has no
     /// "clear emulation", so this is what "back to the browser default" means.
     desktop: Option<Viewport>,
+    /// Whether a `set device` has overridden the user agent in this session. agent-browser can
+    /// only put it back with `--user-agent ""` (an empty override means "use the real one").
+    ua_overridden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +67,7 @@ impl Browser {
             applied_info: None,
             emulated_tabs: BTreeSet::new(),
             desktop: None,
+            ua_overridden: false,
         }
     }
 
@@ -86,11 +90,17 @@ impl Browser {
     }
 
     fn base(&self) -> Command {
+        self.base_with(&[])
+    }
+
+    /// `base()` plus global flags that only apply to this one command.
+    fn base_with(&self, flags: &[&str]) -> Command {
         let mut c = Command::new(&self.cmd);
         c.arg("--session").arg(&self.session).arg("--json");
         if self.headed {
             c.arg("--headed");
         }
+        c.args(flags);
         c
     }
 
@@ -332,6 +342,8 @@ impl Browser {
         let info = if let Some(d) = &emu.device {
             let d = d.clone();
             let out = self.run(&["set", "device", &d])?;
+            // `set device` also overrides the user agent (see `restore_user_agent`).
+            self.ua_overridden = true;
             let info = applied_of(&out);
             self.log.push(format!(
                 "emulating device {d} ({}x{} at {}x, mobile: {})",
@@ -411,8 +423,14 @@ impl Browser {
         })
     }
 
-    /// Puts `target` back on every tab this run emulated (agent-browser has no "clear
-    /// emulation", so a desktop suite would otherwise keep running on the phone size).
+    /// Puts `target` back on every tab this run emulated, so a desktop suite does not keep
+    /// running on the phone size or with the phone user agent.
+    ///
+    /// agent-browser 0.27 has no "clear emulation" and no "clear user agent" command: `set
+    /// viewport` does not undo a `set device`, and the user-agent override survives it. The
+    /// only way back is the global `--user-agent ""` (an empty override means "use the real
+    /// user agent"), which must run on each tab while it is the active one. Without this a
+    /// suite without a `device` would still be served `... iPhone ...`.
     pub fn restore_emulation_on_all(&mut self, target: Option<&Emulation>) -> Result<()> {
         let Some(target) = target else {
             self.emulated_tabs.clear();
@@ -420,8 +438,34 @@ impl Browser {
         };
         for label in std::mem::take(&mut self.emulated_tabs) {
             self.use_tab(&label)?;
+            if self.ua_overridden {
+                self.restore_user_agent()?;
+            }
             self.set_emulation(target)?;
         }
+        Ok(())
+    }
+
+    /// Drops the device user-agent override on the active tab, going back to the browser's own.
+    /// Runs a harmless `eval` so the effect lands on the tab that is active now.
+    pub fn restore_user_agent(&mut self) -> Result<()> {
+        if !self.ua_overridden {
+            return Ok(());
+        }
+        let t = Instant::now();
+        let out = self
+            .base_with(&["--user-agent", ""])
+            .args(["eval", "1"])
+            .stdin(Stdio::null())
+            .output()
+            .with_context(|| format!("cannot run `{}`", self.cmd))?;
+        self.calls += 1;
+        parse_response(&out.stdout, &out.stderr, "eval 1")?;
+        self.log.push(format!(
+            "user agent restored to the browser default ({} ms)",
+            t.elapsed().as_millis()
+        ));
+        self.ua_overridden = false;
         Ok(())
     }
 

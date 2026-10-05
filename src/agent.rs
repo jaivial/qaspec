@@ -30,7 +30,7 @@ pub struct Context<'a> {
     pub username: Option<&'a str>,
     /// Secret names available to `fill_secret` (values resolved lazily by `secret`).
     pub secret_names: Vec<String>,
-    /// Device emulation of this suite, when there is one: `iPhone 14, 390x844, touch`.
+    /// Device emulation of this suite, when there is one: `iPhone 14, 390x844, mobile user agent`.
     pub device: Option<String>,
     pub history: &'a [String],
 }
@@ -180,9 +180,13 @@ fn context_text(ctx: &Context) -> String {
     let mut s = format!("Project: {} (base URL {}).", ctx.project, ctx.base_url);
     if let Some(d) = &ctx.device {
         s.push_str(&format!(" Viewport: {d}."));
-        s.push_str(if d.ends_with(", touch") {
-            " It is a phone or tablet layout: scroll instead of hovering, open hamburger or menu \
-             buttons to reach what is not visible, and never rely on hover-only controls."
+        // agent-browser emulates the size and the user agent but NOT touch (maxTouchPoints is
+        // 0), so this is a phone-sized window driven with the mouse: say what is true and keep
+        // the advice that still helps, instead of promising taps.
+        s.push_str(if d.contains("mobile user agent") {
+            " This is a phone-sized window with a mobile user agent, driven with the mouse: scroll \
+             to reach what is below the fold, and open hamburger or menu buttons for navigation \
+             instead of expecting the desktop links to be on screen."
         } else {
             " The window is smaller than a desktop one: scroll to see what is below the fold \
              before concluding that something is missing."
@@ -641,14 +645,25 @@ mod tests {
             locale: None,
             username: None,
             secret_names: vec![],
-            device: Some("iPhone 14, 390x844, touch".into()),
+            device: Some("iPhone 14, 390x844, mobile user agent".into()),
             history: &[],
         };
         let t = context_text(&ctx);
-        assert!(t.contains("Viewport: iPhone 14, 390x844, touch."), "{t}");
         assert!(
-            t.contains("scroll instead of hovering"),
-            "the agent is told to behave as on a phone: {t}"
+            t.contains("Viewport: iPhone 14, 390x844, mobile user agent."),
+            "{t}"
+        );
+        assert!(
+            t.contains("driven with the mouse"),
+            "the agent is told it cannot tap: {t}"
+        );
+        assert!(
+            t.contains("below the fold") && t.contains("menu buttons"),
+            "the advice that survives without touch emulation is kept: {t}"
+        );
+        assert!(
+            !t.contains("touch"),
+            "agent-browser does not emulate touch, so it must not be promised: {t}"
         );
         let narrow = Context {
             device: Some("390x844".into()),

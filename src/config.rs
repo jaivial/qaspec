@@ -180,16 +180,20 @@ impl Emulation {
     }
 
     /// One line for the agent, including what agent-browser reports once applied: the size and
-    /// whether the device is a touch/mobile one (`set device` implies `mobile: true`).
+    /// whether a mobile user agent is in play (`set device` implies `mobile: true`).
+    ///
+    /// Deliberately no "touch": agent-browser 0.27 emulates the size and the user agent but not
+    /// touch (a real run reports `navigator.maxTouchPoints === 0`), and telling the agent it
+    /// can tap would have it click things a mouse cannot reach.
     pub fn describe_for_agent(&self, applied: Option<&AppliedEmulation>) -> String {
         let Some(a) = applied else {
             return self.describe();
         };
         let size = format!("{}x{}", a.width, a.height);
         match &self.device {
-            Some(d) if a.mobile => format!("{d}, {size}, touch"),
+            Some(d) if a.mobile => format!("{d}, {size}, mobile user agent"),
             Some(d) => format!("{d}, {size}"),
-            None if a.mobile => format!("{size}, touch"),
+            None if a.mobile => format!("{size}, mobile user agent"),
             None => size,
         }
     }
@@ -806,8 +810,9 @@ viewport = [1280, 720]
         };
         assert_eq!(
             device.describe_for_agent(Some(&mob)),
-            "iPhone 14, 390x844, touch",
-            "the agent is told the device, the size and that it is touch"
+            "iPhone 14, 390x844, mobile user agent",
+            "the agent is told the device, the size and that the user agent is mobile \u{2014} never \
+             \"touch\", which agent-browser 0.27 does not emulate"
         );
         assert_eq!(
             device.describe_for_agent(Some(&desk)),
@@ -823,7 +828,14 @@ viewport = [1280, 720]
             }),
         };
         assert_eq!(vp.describe(), "390x844 at 3x");
-        assert_eq!(vp.describe_for_agent(Some(&mob)), "390x844, touch");
+        assert_eq!(
+            vp.describe_for_agent(Some(&mob)),
+            "390x844, mobile user agent"
+        );
+        assert!(
+            !vp.describe_for_agent(Some(&mob)).contains("touch"),
+            "touch is not emulated, so the agent must not be told about it"
+        );
         assert_eq!(
             vp.describe_for_agent(Some(&desk)),
             "1280x720",

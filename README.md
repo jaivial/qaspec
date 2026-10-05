@@ -254,8 +254,9 @@ implies its own metrics. `qaspec check` prints what each suite will run on:
 specs/checkout.qa.ts > checkout  [shop as buyer] 4 step(s)  on Pixel 7
 ```
 
-The device is applied before the suite's first step and restored after it, so a run that mixes a
-phone suite with a desktop suite still runs the desktop one at desktop size. Only the tab the suite
+The device is applied before the suite's first step and fully undone after it, so a run that mixes
+a phone suite with a desktop suite still runs the desktop one at desktop size **with the desktop
+user agent** (see below). Only the tab the suite
 drives is touched (agent-browser applies emulation per target). If agent-browser does not know the
 device, the suite is `blocked` and reports the names it accepts.
 
@@ -277,8 +278,10 @@ Measured with agent-browser 0.27 on Chromium, reading `navigator` and `innerWidt
   `matchMedia('(pointer: coarse)')` stays false with both commands: agent-browser sends mouse events
   and has no `Emulation.setTouchEmulationEnabled` in 0.27. So a spec can prove the *layout* is
   mobile, but it cannot prove that a gesture handler reacts to a real tap. Use `agent-browser tap`
-  when a spec needs a touch gesture. qaspec still tells the agent it is a touch layout, because
-  hovering is not how people use a phone.
+  when a spec needs a touch gesture. For the same reason qaspec tells the agent it is driving a
+  phone-sized window **with the mouse** (and that the user agent is a mobile one), never that it
+  can tap: what a phone-sized layout really needs is scrolling and menu buttons, and that advice
+  holds either way.
 - **A page without `<meta name="viewport">` lays out at 980px**, exactly as on a real phone, no
   matter the emulation. If `window.innerWidth` is 980 instead of 390, the app is missing the meta
   tag — that is a finding about the app, not a broken emulation.
@@ -287,10 +290,15 @@ Measured with agent-browser 0.27 on Chromium, reading `navigator` and `innerWidt
   Playwright catalogue, case-insensitively (`iPhone 12`, `Pixel 7`, `Galaxy S21`, `Pixel 5` all work).
   `set device` applies to the active tab only, and new tabs start with the last window size but the
   desktop user agent — so qaspec applies the device to the suite's tab after switching to it.
-- **There is no "clear emulation"** in agent-browser 0.27, and a device's user-agent override
-  survives a later `set viewport`. To go back to desktop, qaspec reads the window size before it
-  emulates anything and restores it afterwards (the user agent stays overridden for the rest of the
-  session, which only matters if a later desktop suite depends on the user agent).
+- **There is no "clear emulation"** in agent-browser 0.27, no desktop device name to undo a
+  `set device` with, and a device's user-agent override survives a later `set viewport`. Restoring
+  the size alone is not enough: a later desktop suite would still be served `... iPhone ...`, so a
+  spec asserting `navigator.userAgent.includes("iPhone")` is falsy would fail even though the
+  window is 1280 wide. qaspec therefore undoes both: it reads the window size before it emulates
+  anything, writes it back with `set viewport`, and drops the user-agent override with the global
+  `--user-agent ""` (an empty override means "use the browser's real user agent"). Both are applied
+  to every tab the run emulated, and both survive navigation and later tabs.
+  `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts` is the regression test for this.
 - **iOS Simulator (`-p ios`) is not implemented**: it needs Xcode and only runs on macOS. On Linux
   and CI, `set device` gives a mobile Chromium with the iOS user agent.
 
