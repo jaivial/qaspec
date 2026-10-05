@@ -371,19 +371,6 @@ fn main() {
     }
 }
 
-#[cfg(test)]
-mod error_json_tests {
-    use super::*;
-
-    #[test]
-    fn error_json_has_ok_false_and_message() {
-        let v = error_json(&anyhow::anyhow!("no qaspec.toml found"));
-        assert_eq!(v["ok"], false);
-        assert_eq!(v["exitCode"], 3);
-        assert!(v["error"].as_str().unwrap().contains("no qaspec.toml"));
-    }
-}
-
 fn real_main(cli: Cli) -> Result<i32> {
     match cli.cmd {
         Cmd::Init => {
@@ -757,5 +744,18 @@ fn real_main(cli: Cli) -> Result<i32> {
             }
             Ok(report.exit_code)
         }
+    }
+}
+
+#[cfg(test)]
+mod error_json_tests {
+    use super::*;
+
+    #[test]
+    fn error_json_has_ok_false_and_message() {
+        let v = error_json(&anyhow::anyhow!("no qaspec.toml found"));
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["exitCode"], 3);
+        assert!(v["error"].as_str().unwrap().contains("no qaspec.toml"));
     }
 }
