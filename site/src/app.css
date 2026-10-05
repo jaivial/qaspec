@@ -31,7 +31,37 @@
   --r-md: 10px;
   --r-lg: 14px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
+  --bg-rgb: 11 13 16;
+  --hl: rgb(255 255 255 / 0.03);
+  --accent-text: #3fb950;
   color-scheme: dark;
+}
+/* Light theme follows the OS setting. Text colors keep at least 4.5:1 on their surface. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --raised: #eef1f4;
+    --overlay: #e4e8ec;
+    --text: #1f2328;
+    --text-2: #4a525c;
+    --text-3: #5b636e;
+    --border: rgb(0 0 0 / 0.1);
+    --border-strong: rgb(0 0 0 / 0.2);
+    --accent: #1a7f37;
+    --accent-ink: #ffffff;
+    --accent-text: #1a7f37;
+    --link: #0550ae;
+    --bad: #cf222e;
+    --warn: #8a6400;
+    --code-str: #0a3069;
+    --code-fn: #6639ba;
+    --code-kw: #cf222e;
+    --code-num: #0550ae;
+    --bg-rgb: 255 255 255;
+    --hl: rgb(0 0 0 / 0.03);
+    color-scheme: light;
+  }
 }
 * { box-sizing: border-box; }
 html { scroll-padding-top: 72px; -webkit-text-size-adjust: 100%; }

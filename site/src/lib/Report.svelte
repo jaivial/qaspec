@@ -25,6 +25,7 @@
     <span class="num">{report.steps.passed} passed, {report.steps.failed} failed, {report.steps.blocked} blocked</span>
     <span class="meta num">{fmt(report.durationMs)} · 1 browser session · {report.modelCalls} model calls</span>
   </header>
+  <p class="hint">Select a step to see its checks, evidence and agent actions.</p>
   {#each suites as s}
     <section>
       <h4><span class="{s.status}" aria-hidden="true">{icon[s.status]}</span> {s.suite}</h4>
@@ -74,10 +75,11 @@
   header { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 12px 16px; background: var(--raised); border-bottom: 1px solid var(--border); }
   .verdict { font-weight: 600; text-transform: capitalize; }
   .meta { color: var(--text-3); font-size: 13px; }
+  .hint { margin: 0; padding: 8px 16px; font-size: 13px; color: var(--text-3); border-bottom: 1px solid var(--border); }
   section { padding: 12px 8px 8px; border-bottom: 1px solid var(--border); }
   section:last-child { border-bottom: 0; }
   h4 { margin: 0 8px; font-size: 15px; font-weight: 500; }
-  .where { margin: 0 8px 6px 28px; color: var(--text-3); font: 12px var(--mono); overflow-wrap: anywhere; }
+  .where { margin: 0 8px 6px 28px; color: var(--text-3); font: 13px var(--mono); overflow-wrap: anywhere; }
   ul { list-style: none; margin: 0; padding: 0; }
   .step {
     all: unset; box-sizing: border-box; display: flex; align-items: flex-start; gap: 10px; width: 100%;
@@ -85,19 +87,20 @@
     transition-property: background-color; transition-duration: 150ms; transition-timing-function: var(--ease);
   }
   .step:hover { background: var(--overlay); }
+  .step:hover .chev { translate: 2px 0; }
   .step:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
   .ico { width: 14px; flex: none; line-height: 1.5; }
   .body { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; }
   .name { color: var(--text); }
-  .sig { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-3); font: 12px var(--mono); }
+  .sig { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--text-3); font: 13px var(--mono); }
   .sig .bad { color: var(--bad); }
-  .dur { color: var(--text-3); font: 12px var(--mono); line-height: 1.75; flex: none; }
-  .chev { flex: none; margin-top: 3px; color: var(--text-3); transition-property: rotate; transition-duration: 150ms; transition-timing-function: var(--ease); }
+  .dur { color: var(--text-3); font: 13px var(--mono); line-height: 1.75; flex: none; }
+  .chev { flex: none; margin-top: 3px; color: var(--link); transition-property: rotate; transition-duration: 150ms; transition-timing-function: var(--ease); }
   .step[aria-expanded='true'] .chev { rotate: 90deg; }
   .detail { margin: 2px 8px 10px 32px; padding: 4px 0 4px 14px; border-left: 1px solid var(--border-strong); }
   .item { display: flex; gap: 8px; margin: 6px 0; } .item > div { min-width: 0; }
   .item code { overflow-wrap: anywhere; }
-  .ev { color: var(--text-2); font-size: 13px; margin: 4px 0 0; overflow-wrap: anywhere; }
+  .ev { color: var(--text-2); font-size: 14px; margin: 4px 0 0; overflow-wrap: anywhere; }
   .actions-h { margin: 12px 0 4px; font-size: 12px; color: var(--text-2); font-weight: 500; }
   .actions { margin: 0; padding-left: 20px; font: 12px/1.7 var(--mono); color: var(--text-3); overflow-wrap: anywhere; }
   .passed { color: var(--accent); } .failed { color: var(--bad); } .blocked { color: var(--warn); } .skipped { color: var(--text-3); }
