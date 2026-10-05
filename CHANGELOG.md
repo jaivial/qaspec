@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - `qaspec report`: read a finished run from the terminal (`--failed`, `--step <text>`, `--json`).
 - `qaspec run --format json`: the full report on stdout, the text summary on stderr.
+- `qaspec new <name>`: scaffold `specs/<name>.qa.ts`.
+- `qaspec check --json` and `qaspec run --format ndjson` (step events, then a run line, written when the run ends).
 - `AGENTS.md`: the create, check, run, read-failures loop for coding agents.
 
 Built with three subagents running MiniMax-M3.1-Flash-Preview, one per feature, each in its own git

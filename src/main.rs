@@ -105,7 +105,7 @@ enum Cmd {
         cache: Option<String>,
         #[arg(short, long)]
         quiet: bool,
-        /// Output on stdout: `text` (default) or `json` (the full report; the text summary goes to stderr).
+        /// Output on stdout: `text` (default), `json` (the full report) or `ndjson` (one event per step, then a `run` line). The text summary goes to stderr for json and ndjson.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
         /// Run suites in N browser sessions (threads), in parallel. Default: 1, one session.
@@ -118,6 +118,9 @@ enum Cmd {
     /// Parse specs and validate config without opening a browser.
     Check {
         paths: Vec<PathBuf>,
+        /// Print the result as JSON (ok, env, counts, warnings and the suite list).
+        #[arg(long)]
+        json: bool,
         #[arg(short, long)]
         env: Option<String>,
         #[arg(long = "set", value_name = "KEY=VALUE")]
@@ -136,6 +139,11 @@ enum Cmd {
         /// Print machine-readable JSON (the filtered report) instead of text.
         #[arg(long)]
         json: bool,
+    },
+    /// Create a new spec file from a template: `qaspec new checkout`.
+    New {
+        /// Spec name; the file is written to specs/<name>.qa.ts.
+        name: String,
     },
     /// Create qaspec.toml and an example spec.
     Init,
@@ -371,6 +379,24 @@ fn real_main(cli: Cli) -> Result<i32> {
             println!("created qaspec.toml, specs/home.qa.ts and added .qaspec/ to .gitignore");
             Ok(0)
         }
+        Cmd::New { name } => {
+            let valid = !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            if !valid {
+                bail!("spec name must use letters, digits, `-` or `_` only, got `{name}`");
+            }
+            std::fs::create_dir_all("specs")?;
+            let path = format!("specs/{name}.qa.ts");
+            if Path::new(&path).exists() {
+                bail!("{path} already exists");
+            }
+            let body = INIT_SPEC.replace("home", &name);
+            std::fs::write(&path, body)?;
+            println!("created {path}; edit it, then run `qaspec check`");
+            Ok(0)
+        }
         Cmd::State { op } => {
             let cfg = Config::load(&find_config(cli.config)?, &Overrides::default())?;
             let root = cfg.root.join(".qaspec").join("state");
@@ -412,7 +438,12 @@ fn real_main(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Cmd::Check { paths, env, set } => {
+        Cmd::Check {
+            paths,
+            json,
+            env,
+            set,
+        } => {
             let cfg = Config::load(&find_config(cli.config)?, &overrides(env, &set)?)?;
             let specs = load_all(&cfg, &paths)?;
             let planned = runner::plan(&cfg, &specs)?;
@@ -421,6 +452,30 @@ fn real_main(cli: Cli) -> Result<i32> {
                 eprintln!("warning: {w}");
             }
             let steps: usize = planned.iter().map(|p| p.suite.steps.len()).sum();
+            if json {
+                let suites: Vec<serde_json::Value> = planned
+                    .iter()
+                    .map(|p| {
+                        serde_json::json!({
+                            "file": p.file,
+                            "suite": p.suite.name,
+                            "project": p.project,
+                            "identity": p.suite.identity,
+                            "steps": p.suite.steps.len(),
+                        })
+                    })
+                    .collect();
+                let out = serde_json::json!({
+                    "ok": true,
+                    "env": cfg.env,
+                    "files": specs.len(),
+                    "suites": suites,
+                    "steps": steps,
+                    "warnings": warnings,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                return Ok(0);
+            }
             println!(
                 "ok — env `{}`, {} file(s), {} suite(s), {} step(s)",
                 cfg.env,
@@ -578,8 +633,8 @@ fn real_main(cli: Cli) -> Result<i32> {
             jobs,
             force,
         } => {
-            if format != "text" && format != "json" {
-                bail!("--format must be `text` or `json`, got `{format}`");
+            if format != "text" && format != "json" && format != "ndjson" {
+                bail!("--format must be `text`, `json` or `ndjson`, got `{format}`");
             }
             let mut set = set;
             if headed {
@@ -620,6 +675,38 @@ fn real_main(cli: Cli) -> Result<i32> {
             if format == "json" {
                 eprintln!("{}", report.summary());
                 println!("{}", serde_json::to_string_pretty(&report)?);
+            } else if format == "ndjson" {
+                // One JSON object per line, after the run: a `step` event per step, then `run`.
+                eprintln!("{}", report.summary());
+                let v = serde_json::to_value(&report)?;
+                for su in v["suites"].as_array().into_iter().flatten() {
+                    for st in su["steps"].as_array().into_iter().flatten() {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "event": "step",
+                                "suite": su["suite"],
+                                "file": su["file"],
+                                "name": st["name"],
+                                "status": st["status"],
+                                "reason": st["reason"],
+                                "durationMs": st["durationMs"],
+                                "items": st["items"],
+                            })
+                        );
+                    }
+                }
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "run",
+                        "runId": v["runId"],
+                        "status": v["status"],
+                        "exitCode": v["exitCode"],
+                        "steps": v["steps"],
+                        "modelCalls": v["modelCalls"],
+                    })
+                );
             } else {
                 println!("{}", report.summary());
             }

@@ -2,9 +2,9 @@
 
 Loop: write a spec, validate it, run it, read only what failed.
 
-1. Create: `qaspec init` once, then add `specs/<name>.qa.ts` (see README for `suite`, `step`, `goal`, `expect`).
-2. Validate without a browser: `qaspec check` (exit code 0 means specs and config are valid).
-3. Run: `qaspec run --format json -q > run.json`. stdout is the full JSON report, the text summary goes to stderr. Exit code 0 passed, 1 failed, other values blocked or setup problems.
+1. Create: `qaspec init` once, then `qaspec new <name>` for each spec (writes `specs/<name>.qa.ts`; see README for `suite`, `step`, `goal`, `expect`).
+2. Validate without a browser: `qaspec check` or `qaspec check --json` (exit code 0 means specs and config are valid; the JSON lists suites, steps and warnings).
+3. Run: `qaspec run --format json -q > run.json`, or `--format ndjson` for one event per step plus a final `run` line (emitted when the run ends). stdout is the full JSON report, the text summary goes to stderr. Exit code 0 passed, 1 failed, other values blocked or setup problems.
 4. Read failures: `qaspec report --failed` (text) or `qaspec report --failed --json`. Use `--step <text>` to look at one step.
 5. Fix the app or the spec and rerun. A passing goal is replayed from the cache without model calls; use `--cache strict` in CI.
 
