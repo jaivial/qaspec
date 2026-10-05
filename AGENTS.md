@@ -9,3 +9,5 @@ Loop: write a spec, validate it, run it, read only what failed.
 5. Fix the app or the spec and rerun. A passing goal is replayed from the cache without model calls; use `--cache strict` in CI.
 
 Never put passwords in specs: use secrets in qaspec.toml. The model only sees secret names.
+
+With `--format json|ndjson` or `--json`, a failure that is not a test result (missing config, invalid spec) prints `{"ok":false,"error":"...","exitCode":3}` on stdout and exits 3.

@@ -339,14 +339,48 @@ fn new_run_id() -> String {
     )
 }
 
+/// True when the command asked for machine-readable output, so a failure should be JSON too.
+fn wants_json(cmd: &Cmd) -> bool {
+    match cmd {
+        Cmd::Run { format, .. } => format == "json" || format == "ndjson",
+        Cmd::Check { json, .. } | Cmd::Report { json, .. } => *json,
+        _ => false,
+    }
+}
+
+fn error_json(e: &anyhow::Error) -> serde_json::Value {
+    serde_json::json!({
+        "ok": false,
+        "error": format!("{e:#}"),
+        "exitCode": 3,
+    })
+}
+
 fn main() {
     let cli = Cli::parse();
+    let json = wants_json(&cli.cmd);
     match real_main(cli) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
             eprintln!("error: {e:#}");
+            if json {
+                println!("{}", error_json(&e));
+            }
             std::process::exit(3);
         }
+    }
+}
+
+#[cfg(test)]
+mod error_json_tests {
+    use super::*;
+
+    #[test]
+    fn error_json_has_ok_false_and_message() {
+        let v = error_json(&anyhow::anyhow!("no qaspec.toml found"));
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["exitCode"], 3);
+        assert!(v["error"].as_str().unwrap().contains("no qaspec.toml"));
     }
 }
 
