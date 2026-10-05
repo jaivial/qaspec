@@ -227,7 +227,7 @@
   .gh { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
   .burger { display: none; }
 
-  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section { padding-block: 56px; border-top: 1px solid var(--border); }
   h2 { font-size: 26px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 8px; }
   h3 { font-size: 16px; font-weight: 500; margin: 0; }
   .sub { color: var(--text-2); margin: 0 0 28px; max-width: 70ch; }
@@ -302,7 +302,7 @@
     .gh span { display: none; }
     .gh { width: 44px; height: 44px; justify-content: center; padding: 0; }
     .burger { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); cursor: pointer; }
-    section { padding: 40px 0; }
+    section { padding-block: 40px; }
     h1 { font-size: 32px; }
     h2 { font-size: 22px; }
     .lead { font-size: 16px; }

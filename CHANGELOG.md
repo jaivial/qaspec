@@ -15,7 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Website redesign: a neutral palette with four surface levels, one green accent for the primary action
   and passing states, and text colors that meet WCAG AA on every surface. IBM Plex Sans and JetBrains
   Mono are self-hosted. Decorative cards and the window-chrome colors are gone.
-- Mobile: a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
+- Mobile: 20px page gutters (sections had lost their side padding), a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
   stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
 - New "How it compares" tables (writing tests, what a check can see, running them) against scripted
   E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
