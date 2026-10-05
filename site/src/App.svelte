@@ -3,6 +3,7 @@
   import Report from './lib/Report.svelte';
   import Code from './lib/Code.svelte';
   import Compare from './lib/Compare.svelte';
+  import Checks from './lib/Checks.svelte';
   import Figure from './lib/Figure.svelte';
   import run from './data/run.txt?raw';
   import report from './data/report.json';
@@ -15,7 +16,29 @@
   const repo = 'https://github.com/jaivial/qaspec';
   const install = 'cargo install --git https://github.com/jaivial/qaspec --tag v0.1.0';
 
-  const nav = [['#how', 'How it works'], ['#compare', 'Compare'], ['#config', 'Config'], ['#reference', 'Reference']];
+  const nav = [['#how', 'How it works'], ['#checks', 'Compare'], ['#config', 'Config'], ['#reference', 'Reference']];
+
+  // Yes/no comparison of the three approaches. Every row is checked against the e2e 0.16 docs;
+  // rows where qaspec loses stay in.
+  const checkCols = ['qaspec', ['Regular E2E', 'Regular'], ['Agentic E2E (TesterArmy)', 'Agentic']];
+  const checkRows = [
+    ['Tests written without selectors', true, false, [true, 'Mixed with locators']],
+    ['Survives UI changes without edits', true, false, true],
+    ['Judges the screen like a person', true, false, true],
+    ['The model sees console errors', true, false, false],
+    ['The model sees network requests', true, false, false],
+    ['Console and network checks built in', true, false, false],
+    ['Ordered checks sharing browser state', true, true, true],
+    ['Sign-in reused across runs', true, true, [false, 'Once per run']],
+    ['One browser for the whole run', true, false, false],
+    ['Dependent apps: health, order, shared data', true, false, false],
+    ['Passwords never reach the model', true, [true, 'No model'], true],
+    ['Runs without calling a model', [false, 'Exact checks only'], true, [true, 'From the cache']],
+    ['Replay cache for unchanged UI', false, [true, 'No model'], true],
+    ['Parallel workers', false, true, true],
+    ['Mobile apps (iOS, Android)', false, [true, 'Appium, Detox'], true],
+    ['Single binary, no Node runtime', true, false, false]
+  ];
 
   // Columns: qaspec, scripted E2E (Playwright/Cypress), e2e by TesterArmy, agent-browser on its own.
   const columns = ['qaspec', 'Scripted E2E', 'e2e (TesterArmy)', 'agent-browser alone'];
@@ -38,7 +61,7 @@
 
   const running = [
     ['Browsers per run', ['1 Chromium', 'One tab per project'], ['1 context per test', 'Workers in parallel'], ['1 context per test', 'Workers in parallel'], ['1 per session', 'You manage it']],
-    ['Sign in', ['Once per identity', 'Saved state reused across runs'], 'Setup project + storageState', 'Setup test + saved session', 'state save / load by hand'],
+    ['Sign in', ['Once per identity', 'Saved state reused across runs'], 'Setup project + storageState', ['Setup test, once per run', 'Sessions are never reused across runs'], 'state save / load by hand'],
     ['Several apps that depend on each other', ['yes', 'depends_on, health, captures'], ['partial', 'Projects, by hand'], ['partial', 'Targets'], 'no'],
     ['Runtime', 'One Rust binary + agent-browser', 'Node + browsers', 'Node 22.12+ + Playwright', 'agent-browser'],
     ['Model calls per run', ['Every goal and judged check', 'No replay cache yet'], 'None', ['Fewer after the first run', 'Replay cache'], 'Every step']
@@ -131,9 +154,16 @@
     </div>
   </section>
 
+  <section class="wrap" id="checks">
+    <h2>qaspec, regular E2E and agentic E2E</h2>
+    <p class="sub">Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is <a href="https://github.com/tester-army/e2e">e2e by TesterArmy</a>, where an agent acts and asserts but never sees the console or network. The rows where qaspec loses are in the table too.</p>
+    <Checks caption="qaspec, regular E2E and agentic E2E compared" columns={checkCols} rows={checkRows} />
+    <p class="note">Notes under some marks explain them; on a phone they are in the detailed tables below. Based on the e2e 0.16 docs.</p>
+  </section>
+
   <section class="wrap" id="compare">
-    <h2>How it compares</h2>
-    <p class="sub">qaspec sits between scripted tests and an agent you drive by hand. It borrows the agent loop from <a href="https://github.com/tester-army/e2e">e2e by TesterArmy</a>, gives the model the console and network that e2e hides, and leaves the browser to agent-browser.</p>
+    <h2>In detail</h2>
+    <p class="sub">The same comparison with the details, plus agent-browser on its own. qaspec sits between scripted tests and an agent you drive by hand. It borrows the agent loop from <a href="https://github.com/tester-army/e2e">e2e by TesterArmy</a>, gives the model the console and network that e2e hides, and leaves the browser to agent-browser.</p>
     <div class="versus" role="group" aria-label="Compare qaspec with">
       <span>qaspec vs</span>
       {#each columns.slice(1) as c, i}

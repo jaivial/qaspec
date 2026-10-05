@@ -74,6 +74,29 @@ The report of that run, rendered on the website, with the failing step expanded:
 
 ## How it compares
 
+Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is [e2e by TesterArmy](https://github.com/tester-army/e2e).
+
+| | qaspec | Regular E2E | Agentic E2E (TesterArmy) |
+|---|:---:|:---:|:---:|
+| Tests written without selectors | ✅ | ❌ | ✅ (mixed with locators) |
+| Survives UI changes without edits | ✅ | ❌ | ✅ |
+| Judges the screen like a person | ✅ | ❌ | ✅ |
+| The model sees console errors | ✅ | ❌ | ❌ |
+| The model sees network requests | ✅ | ❌ | ❌ |
+| Console and network checks built in | ✅ | ❌ | ❌ |
+| Ordered checks sharing browser state | ✅ | ✅ | ✅ |
+| Sign-in reused across runs | ✅ | ✅ | ❌ (once per run) |
+| One browser for the whole run | ✅ | ❌ | ❌ |
+| Dependent apps: health, order, shared data | ✅ | ❌ | ❌ |
+| Passwords never reach the model | ✅ | ✅ (no model) | ✅ |
+| Runs without calling a model | ❌ (exact checks only) | ✅ | ✅ (from the cache) |
+| Replay cache for unchanged UI | ❌ | ✅ (no model) | ✅ |
+| Parallel workers | ❌ | ✅ | ✅ |
+| Mobile apps (iOS, Android) | ❌ | ✅ (Appium, Detox) | ✅ |
+| Single binary, no Node runtime | ✅ | ❌ | ❌ |
+
+In detail, with agent-browser on its own as a fourth column:
+
 <img src="assets/screenshots/compare.png" alt="Comparison table of qaspec, scripted E2E, e2e by TesterArmy and agent-browser alone" width="860">
 
 | | qaspec | Scripted E2E (Playwright, Cypress) | [e2e](https://github.com/tester-army/e2e) (TesterArmy) | agent-browser alone |
@@ -84,7 +107,7 @@ The report of that run, rendered on the website, with the failing step expanded:
 | Console errors per step | Yes, `expect.console.noErrors()` | Hand-written listeners | Hidden from the model | `console` command |
 | Network status per step | Yes, `expect.network(…).status(…)` | `waitForResponse` | Hidden from the model | `network requests` |
 | Browsers per run | 1 Chromium, one tab per project | A context per test, parallel workers | A context per test, parallel workers | One per session, by hand |
-| Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test + saved session | `state save` / `load` by hand |
+| Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test, once per run (sessions are never reused across runs) | `state save` / `load` by hand |
 | Several dependent apps | `depends_on`, health checks, captures | Projects, by hand | Targets | No |
 | Runtime | One Rust binary + agent-browser | Node + browsers | Node 22.12+ + Playwright | agent-browser |
 | Model calls | Every goal and judged check (no replay cache yet) | None | Fewer after the first run | Every step |
@@ -231,7 +254,7 @@ cd site && npm ci && npm run dev          # http://localhost:5173/qaspec/
 npm run build && npm run preview          # production build
 ```
 
-The README screenshots come from the site's `?shot=run|report|spec|check|compare` views, captured with agent-browser
+The README screenshots come from the site's `?shot=run|report|spec|check|checks|compare` views, captured with agent-browser
 (see [`site/README.md`](site/README.md)).
 
 ## Development

@@ -3,6 +3,7 @@
   import Report from './lib/Report.svelte';
   import Code from './lib/Code.svelte';
   import Compare from './lib/Compare.svelte';
+  import Checks from './lib/Checks.svelte';
   import run from './data/run.txt?raw';
   import check from './data/check.txt?raw';
   import report from './data/report.json';
@@ -10,6 +11,25 @@
 
   let { name } = $props();
 
+  const checkCols = ['qaspec', 'Regular E2E', 'Agentic E2E (TesterArmy)'];
+  const checkRows = [
+    ['Tests written without selectors', true, false, [true, 'Mixed with locators']],
+    ['Survives UI changes without edits', true, false, true],
+    ['Judges the screen like a person', true, false, true],
+    ['The model sees console errors', true, false, false],
+    ['The model sees network requests', true, false, false],
+    ['Console and network checks built in', true, false, false],
+    ['Ordered checks sharing browser state', true, true, true],
+    ['Sign-in reused across runs', true, true, [false, 'Once per run']],
+    ['One browser for the whole run', true, false, false],
+    ['Dependent apps: health, order, shared data', true, false, false],
+    ['Passwords never reach the model', true, [true, 'No model'], true],
+    ['Runs without calling a model', [false, 'Exact checks only'], true, [true, 'From the cache']],
+    ['Replay cache for unchanged UI', false, [true, 'No model'], true],
+    ['Parallel workers', false, true, true],
+    ['Mobile apps (iOS, Android)', false, [true, 'Appium, Detox'], true],
+    ['Single binary, no Node runtime', true, false, false]
+  ];
   const columns = ['qaspec', 'Scripted E2E', 'e2e (TesterArmy)', 'agent-browser alone'];
   const rows = [
     ['What you write', 'Goals and expectations', 'Locators, waits, helpers', 'Code plus agent steps', 'Prompts to a coding agent'],
@@ -29,6 +49,8 @@
     <Terminal title="qaspec check" text={'$ qaspec check\n' + check} />
   {:else if name === 'report'}
     <Report {report} />
+  {:else if name === 'checks'}
+    <Checks caption="qaspec, regular E2E and agentic E2E" columns={checkCols} rows={checkRows} />
   {:else if name === 'compare'}
     <Compare caption="qaspec compared" {columns} {rows} />
   {:else if name === 'spec'}

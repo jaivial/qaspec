@@ -17,12 +17,12 @@ shows the files in the repo.
 
 ## Screenshots
 
-`?shot=run|report|spec|check|compare` renders a single view at 1000px. To regenerate the README
+`?shot=run|report|spec|check|checks|compare` renders a single view at 1000px. To regenerate the README
 screenshots:
 
 ```bash
 npm run build && npx vite preview --port 4173 &
-for n in run report spec check compare; do
+for n in run report spec check checks compare; do
   agent-browser open "http://localhost:4173/qaspec/?shot=$n"
   agent-browser wait --load networkidle
   agent-browser screenshot "#shot" "public/screenshots/$n.png"

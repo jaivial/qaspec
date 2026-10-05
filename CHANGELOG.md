@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   Mono are self-hosted. Decorative cards and the window-chrome colors are gone.
 - Mobile: 20px page gutters (sections had lost their side padding), a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
   stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
+- A yes/no comparison table of qaspec, regular E2E and agentic E2E (TesterArmy), on the website and
+  in the README. It includes the rows where qaspec loses: no replay cache, no parallel workers, no
+  mobile apps. On phones it stays a three-column table with short headers.
+- The detailed comparison now says that e2e sessions last one run and are never reused across runs.
 - New "How it compares" tables (writing tests, what a check can see, running them) against scripted
   E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
 - New screenshots of the three things the agent does (sign in, reach a goal, catch a page that looks
