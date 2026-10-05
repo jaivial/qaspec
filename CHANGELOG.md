@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- **Replay cache for goals.** A goal that passed with all of its expectations passing is recorded as
+  the sequence of browser actions the agent performed, in `.qaspec/cache/<env>/<sha>.json` (mode 600).
+  The next run replays it with zero model calls; `fill_secret` is stored as the secret *name* only and
+  its value is read at replay time and typed through agent-browser's stdin, so it is never in argv and
+  never in the file. Refs are never stored: each action keeps a semantic locator (role + accessible
+  name, plus an index when the page has several) and is replayed with `find`, with `label`, `nth` and
+  the bare tag as fallbacks for the tags where agent-browser 0.27's `find --name` finds nothing.
+  The key hashes project, identity, spec file, suite, step, the interpolated goal text (`${run.id}`
+  back as a placeholder) and a fingerprint of the page the goal starts from (URL path + the
+  interactive roles and names); recorded values keep their placeholders, so a replay uses this run's
+  `${params.x}`, `${run.id}` and captures.
+- `qaspec run --cache auto|strict|off` (default `auto`). `auto` replays and re-records, self-healing
+  from the current page when a replayed action cannot be located; `strict` makes a missing or stale
+  recording a failure (`CACHE_MISSING` / `CACHE_REPLAY_FAILED`) with zero model calls, for CI.
+- Goal items in the JSON report carry `"cache": "replayed" | "recorded" | "agent"`, the terminal marks
+  those steps with `(replayed)`, and the run summary counts goals replayed and recorded.
+
 ### Changed
 - The website is now a Svelte 5 + Vite app in `site/`, deployed from the `gh-pages` branch. It renders
   the real output and `report.json` of a run (an interactive report viewer) and imports the example
@@ -18,14 +36,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Mobile: 20px page gutters (sections had lost their side padding), a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
   stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
 - A yes/no comparison table of qaspec, regular E2E and agentic E2E (TesterArmy), on the website and
-  in the README. It includes the rows where qaspec loses: no replay cache, no parallel workers, no
-  mobile apps. On phones it stays a three-column table with short headers.
+  in the README. It includes the rows where qaspec loses: no parallel workers, no mobile apps. On
+  phones it stays a three-column table with short headers.
 - The detailed comparison now says that e2e sessions last one run and are never reused across runs.
 - New "How it compares" tables (writing tests, what a check can see, running them) against scripted
   E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
 - New screenshots of the three things the agent does (sign in, reach a goal, catch a page that looks
   fine) and of the back-office app. Images ship as WebP with PNG fallback.
 - The demo app in `tests/fixtures/app` has a plain stylesheet, so its screenshots look like a real app.
+- README: the comparison tables and the roadmap no longer say qaspec has no replay cache; there is a
+  new "Replay cache" section describing the key, the locators, secrets, self-healing and the modes.
 
 ### Fixed
 - The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at

@@ -1,5 +1,6 @@
 mod agent;
 mod browser;
+mod cache;
 mod config;
 mod llm;
 mod report;
@@ -7,6 +8,7 @@ mod runner;
 mod spec;
 
 use anyhow::{bail, Context, Result};
+use cache::CacheMode;
 use clap::{Parser, Subcommand};
 use config::{Config, Overrides};
 use std::path::{Path, PathBuf};
@@ -96,6 +98,10 @@ enum Cmd {
         /// Also write a JUnit XML report.
         #[arg(long)]
         junit: Option<PathBuf>,
+        /// Replay cache: `auto` replays recorded goals and records new ones, `strict` fails when
+        /// a recording is missing or stale (for CI), `off` never uses it.
+        #[arg(long, value_name = "MODE")]
+        cache: Option<String>,
         #[arg(short, long)]
         quiet: bool,
     },
@@ -339,6 +345,7 @@ fn real_main(cli: Cli) -> Result<i32> {
             headed,
             json,
             junit,
+            cache,
             quiet,
         } => {
             let mut set = set;
@@ -358,7 +365,18 @@ fn real_main(cli: Cli) -> Result<i32> {
             for w in check_identities(&cfg, &planned)? {
                 eprintln!("warning: {w}");
             }
-            let mut r = runner::Runner::new(&cfg, runner::RunOptions { keep_open, quiet })?;
+            let cache_mode = match &cache {
+                Some(c) => c.parse()?,
+                None => CacheMode::Auto,
+            };
+            let mut r = runner::Runner::new(
+                &cfg,
+                runner::RunOptions {
+                    keep_open,
+                    quiet,
+                    cache: cache_mode,
+                },
+            )?;
             let report = r.run(&planned)?;
             println!("{}", report.summary());
             let json_path = json.unwrap_or_else(|| cfg.root.join(".qaspec").join("report.json"));
