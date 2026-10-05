@@ -4,7 +4,9 @@
    * shown next to every value, so nothing needs horizontal scrolling.
    * cells: 'yes' | 'no' | 'partial' | any text. A cell can be [value, note].
    */
-  let { caption, columns, rows, highlight = 0, versus = 1 } = $props();
+  let { caption, columns, rows, highlight = 0, versus = 1, summary = 5 } = $props();
+  let all = $state(false);
+  const shown = $derived(all || rows.length <= summary + 1 ? rows : rows.slice(0, summary));
   const kind = (v) => (v === 'yes' || v === 'no' || v === 'partial' ? v : 'text');
   const label = { yes: 'Yes', no: 'No', partial: 'Partly' };
 </script>
@@ -31,7 +33,7 @@
       <tr><th scope="col"><span class="sr-only">Capability</span></th>{#each columns as c, i}<th scope="col" class:hl={i === highlight}>{c}</th>{/each}</tr>
     </thead>
     <tbody>
-      {#each rows as [feature, ...cells]}
+      {#each shown as [feature, ...cells]}
         <tr>
           <th scope="row">{feature}</th>
           {#each cells as c, i}<td class:hl={i === highlight} class:vs={i === versus} data-col={columns[i]}>{@render cell(c)}</td>{/each}
@@ -39,21 +41,28 @@
       {/each}
     </tbody>
   </table>
+  {#if rows.length > summary + 1}
+    <button type="button" class="more" aria-expanded={all} onclick={() => (all = !all)}>
+      {all ? 'Show fewer rows' : `Show ${rows.length - summary} more rows`}
+    </button>
+  {/if}
 </div>
 
 <style>
-  .cmp { border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--border); overflow: hidden; background: var(--surface); }
+  .cmp { border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--border); overflow: clip; background: var(--surface); }
+  .more { display: block; width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--border); background: var(--raised); color: var(--link); font: 500 14px var(--sans); cursor: pointer; }
+  .more:hover { background: var(--overlay); }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  thead th { position: sticky; top: 0; background: var(--raised); color: var(--text); font-weight: 500; text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  thead th { position: sticky; top: 56px; z-index: 2; background: var(--raised); color: var(--text); font-weight: 500; text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); }
   thead th.hl { color: var(--accent); }
-  tbody th { text-align: left; font-weight: 400; color: var(--text-2); padding: 12px 14px; width: 26%; }
+  tbody th { text-align: left; font-weight: 400; color: var(--text-2); padding: 12px 14px; width: 26%; position: sticky; left: 0; background: var(--surface); }
   td { padding: 12px 14px; vertical-align: top; color: var(--text); }
-  td.hl { background: rgb(255 255 255 / 0.025); }
+  td.hl { background: var(--hl); }
   tbody tr + tr > * { border-top: 1px solid var(--border); }
   .mark { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
   .mark svg { flex: none; }
   .mark.yes { color: var(--accent); } .mark.no { color: var(--text-3); } .mark.partial { color: var(--warn); }
-  .note { display: block; color: var(--text-3); font-size: 13px; margin-top: 2px; }
+  .note { display: block; color: var(--text-3); font-size: 14px; margin-top: 2px; }
 
   @media (max-width: 720px) {
     thead { display: none; }
@@ -61,10 +70,10 @@
     tbody tr { padding: 14px 16px; }
     tbody tr + tr > * { border-top: 0; }
     tbody tr + tr { border-top: 1px solid var(--border); }
-    tbody th { padding: 0 0 8px; color: var(--text); font-weight: 500; width: auto; }
+    tbody th { padding: 0 0 8px; color: var(--text); font-weight: 500; width: auto; position: static; background: none; }
     td { display: none; grid-template-columns: 104px 1fr; gap: 10px; padding: 5px 0; }
     td.hl, td.vs { display: grid; }
-    td::before { content: attr(data-col); color: var(--text-3); font-size: 13px; }
+    td::before { content: attr(data-col); color: var(--text-3); font-size: 14px; }
     td.hl { background: none; }
     td.hl::before { color: var(--accent); }
   }
