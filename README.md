@@ -45,8 +45,9 @@ qaspec sits in between: **an agent that clicks like a person and inspects like a
 
 - **One file, many checks in order.** A `suite` is a journey of `step`s that share the browser state.
   A failed step skips only the steps that depend on its state.
-- **One Chromium for the whole run.** A Chromium session costs about 1.5 GB of memory, so qaspec never
-  runs browsers in parallel. Each project gets its own tab, and the session is reused across suites.
+- **One Chromium for the whole run.** A Chromium session costs about 1.5 GB of memory, so browsers are
+  never parallel by default. Each project gets its own tab and the session is reused across suites;
+  `--jobs N` opens more, behind a memory guard.
 - **Sign in once.** Identities sign in once (with a login spec, or the agent does it by itself). The
   state is saved under `.qaspec/state/` with mode 600 and reused across runs until it expires.
 - **Replay cache.** A goal that passed (and whose expectations passed) is recorded as browser
@@ -112,7 +113,7 @@ In detail, with agent-browser on its own as a fourth column:
 | Judges the screen like a person | Yes, `expect('…')` quotes evidence | No | Yes, `agent.assert` | You read it |
 | Console errors per step | Yes, `expect.console.noErrors()` | Hand-written listeners | Hidden from the model | `console` command |
 | Network status per step | Yes, `expect.network(…).status(…)` | `waitForResponse` | Hidden from the model | `network requests` |
-| Browsers per run | 1 Chromium, one tab per project | A context per test, parallel workers | A context per test, parallel workers | One per session, by hand |
+| Browsers per run | 1 Chromium, one tab per project (`--jobs N` opt-in) | A context per test, parallel workers | A context per test, parallel workers | One per session, by hand |
 | Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test, once per run (sessions are never reused across runs) | `state save` / `load` by hand |
 | Several dependent apps | `depends_on`, health checks, captures | Projects, by hand | Targets | No |
 | Mobile web | `device: 'iPhone 14'` per suite/project/browser, and the agent is told to scroll and use menus | `devices['iPhone 14']` by hand | Not built in | `set device`, by hand |
@@ -139,6 +140,7 @@ qaspec run           # run everything in one browser session
 qaspec run specs/todos.qa.ts --env dev --set params.todo="Buy bread" --headed
 qaspec run --keep-open   # leave the browser up; the next run reuses it (session qaspec-<env>)
 qaspec run --cache strict  # CI: a missing or stale recording is a failure, never a model call
+qaspec run --jobs 4      # opt-in: N browser sessions in parallel (see "Parallel runs")
 qaspec state list    # saved sign-ins; `qaspec state clear app.qa` forces a new login
 ```
 
@@ -331,7 +333,8 @@ qaspec run
      └─ tab "admin"
 ```
 
-1. Plan: suites are ordered by project dependency, then grouped by identity.
+1. Plan: suites are ordered by project dependency, then grouped by identity (with `--jobs N` they are
+   also split into independent workers).
 2. Each project is health-checked once. Dependencies that are down make dependents `blocked`.
 3. Each identity is restored from saved state and checked with `valid_if`. If that fails, the
    identity signs in again and the new state is saved, filtered to that project's host.
@@ -365,6 +368,53 @@ in `.qaspec/cache/<env>/<sha>.json` (mode 600).
   (`CACHE_MISSING` / `CACHE_REPLAY_FAILED`) with zero model calls, which is what CI wants.
 - `--cache off` disables it. The JSON report marks each goal item with `"cache":
   "replayed" | "recorded" | "agent"`, and the terminal prints `(replayed)` on those steps.
+
+## Parallel runs
+
+By default everything runs in **one** browser session: a Chromium costs about 1.5 GB, so parallel
+browsers are opt-in.
+
+```bash
+qaspec run --jobs 4          # four sessions, one thread each (std::thread, no async runtime)
+qaspec run --jobs 8 --force # skip the memory guard
+```
+
+`--jobs N` splits the planned suites into `N` groups that can run independently, balances them by
+number of steps, and gives each worker its own `Runner`, its own agent-browser session
+(`qaspec-<run>-w0`, `qaspec-<run>-w1`, ...) and its own LLM client. Suites stay in the same worker when:
+
+- they share the same `(project, identity)`: one browser holds one signed-in identity at a time, and
+  the saved state file of an identity is written by a single worker;
+- their projects are connected by `depends_on` or by a step that switches `project:` **and** they use
+  the same identity: the identity is signed in once, in plan order, before its dependents need it;
+- one captures a value (`capture(...)`) that a later suite uses as `${name}`;
+- it sets a `device` (see [Mobile web](#mobile-web)): agent-browser cannot undo the mobile user
+  agent, so every device suite goes to the first worker and runs last in it.
+
+Within a worker the suites keep their plan order. Suites with no identity have nothing to share, so
+they split freely. A suite with only a `viewport` is not a device suite: qaspec restores that one,
+so it can land in any worker.
+
+**Memory guard.** Before opening `N > 1` sessions, qaspec reads `MemAvailable` from `/proc/meminfo`
+and assumes 1536 MiB per session, keeping 2 GiB free. If `N` does not fit it lowers it to what fits
+and says so (`warning: only 20000 MiB available, 8 sessions need 12288 MiB ...: running 11
+session(s). Use --force to override.`). `--force` skips the check; on a system without
+`/proc/meminfo` the guard is skipped with a warning.
+
+**Output.** Each worker's lines are buffered and printed when its suite ends, prefixed with `[w<i>]`,
+so two browsers never interleave in the middle of a line. The JSON report keeps all suites in plan
+order; `browserSessions` lists every session and `browserSession` stays the first one (`report-1`
+schema, so existing readers keep working). The summary line says "N browser sessions".
+
+```bash
+qaspec run specs/app-smoke.qa.ts specs/app-identities.qa.ts specs/admin-overview.qa.ts specs/app-cross.qa.ts --jobs 2
+# [w1]   ✓ app/viewer: reused saved session
+# [w1]   ✓ viewer sees their name (5.0s)
+# [w0]
+# ▶ specs/app-smoke.qa.ts › smoke  [app as qa]
+# ...
+# ✗ FAILED — steps: 10 passed, 1 failed, 0 blocked, 0 skipped · 6 suites · 27.1s · 2 browser sessions · 105 browser calls
+```
 
 ## Examples
 

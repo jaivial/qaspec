@@ -197,7 +197,11 @@ pub struct Report {
     pub version: &'static str,
     pub run_id: String,
     pub env: String,
+    /// First session; kept for backward compatibility with readers of `report-1`.
     pub browser_session: String,
+    /// Every session of the run (one entry unless `--jobs N` was used).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browser_sessions: Vec<String>,
     pub status: Status,
     pub exit_code: i32,
     pub duration_ms: u64,
@@ -216,6 +220,7 @@ impl Report {
             run_id: run_id.into(),
             env: env.into(),
             browser_session: session.into(),
+            browser_sessions: vec![session.into()],
             status: Status::Passed,
             exit_code: 0,
             duration_ms: 0,
@@ -283,8 +288,9 @@ impl Report {
     pub fn summary(&self) -> String {
         let t = &self.steps;
         let (replayed, recorded) = self.cache_counts();
+        let sessions = self.browser_sessions.len().max(1);
         format!(
-            "\n{} {} — steps: {} passed, {} failed, {} blocked, {} skipped · {} suites · {:.1}s · 1 browser session · {} browser calls · {} model calls ({} tokens){}",
+            "\n{} {} — steps: {} passed, {} failed, {} blocked, {} skipped · {} suites · {:.1}s · {} browser session{} · {} browser calls · {} model calls ({} tokens){}",
             self.status.icon(),
             self.status.as_str().to_uppercase(),
             t.passed,
@@ -293,6 +299,8 @@ impl Report {
             t.skipped,
             self.suites.len(),
             self.duration_ms as f64 / 1000.0,
+            sessions,
+            if sessions == 1 { "" } else { "s" },
             self.browser_calls,
             self.model_calls,
             self.tokens,
