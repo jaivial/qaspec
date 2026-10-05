@@ -1,8 +1,10 @@
 //! Thin typed client over the `agent-browser` CLI (`--json`). It is the only way qaspec talks to
 //! the browser. One `Browser` = one agent-browser session = one Chromium for the whole run.
 
+use crate::config::{AppliedEmulation, Emulation, Viewport};
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -18,6 +20,17 @@ pub struct Browser {
     owns_session: bool,
     /// Signal cursors: events before these offsets belong to earlier steps.
     cursor: (usize, usize, usize),
+    /// Label of the active tab, to know which tabs got an emulation.
+    active_tab: Option<String>,
+    /// Emulation currently applied to the active tab (to restore it between suites).
+    applied: Option<Emulation>,
+    /// What agent-browser reported for `applied` (size and mobile flag), for the agent context.
+    applied_info: Option<AppliedEmulation>,
+    /// Tabs that got an emulation in this run, to put them back afterwards.
+    emulated_tabs: BTreeSet<String>,
+    /// The window size the browser had before qaspec emulated anything: agent-browser has no
+    /// "clear emulation", so this is what "back to the browser default" means.
+    desktop: Option<Viewport>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +59,11 @@ impl Browser {
             redact: vec![],
             owns_session,
             cursor: (0, 0, 0),
+            active_tab: None,
+            applied: None,
+            applied_info: None,
+            emulated_tabs: BTreeSet::new(),
+            desktop: None,
         }
     }
 
@@ -270,10 +288,17 @@ impl Browser {
 
     /// Switches to the labelled tab, creating it if needed. Returns true if it was created.
     pub fn use_tab(&mut self, label: &str) -> Result<bool> {
+        // agent-browser applies emulation per target and does not inherit it to other tabs,
+        // so switching tabs drops what this client thinks is applied.
+        if self.active_tab.as_deref() != Some(label) {
+            self.applied = None;
+            self.applied_info = None;
+        }
         let tabs = self.run(&["tab", "list"])?;
         let list = tabs["tabs"].as_array().cloned().unwrap_or_default();
         if list.iter().any(|t| t["label"].as_str() == Some(label)) {
             self.run(&["tab", label])?;
+            self.active_tab = Some(label.to_string());
             return Ok(false);
         }
         // Reuse the initial unlabelled blank tab for the first project.
@@ -289,7 +314,118 @@ impl Browser {
             }
         }
         self.run(&["tab", "new", "--label", label])?;
+        self.active_tab = Some(label.to_string());
         Ok(true)
+    }
+
+    /// Emulates a device (`set device`) or a viewport (`set viewport w h [scale]`) on the
+    /// ACTIVE tab. agent-browser applies emulation per target and does not inherit it to new
+    /// tabs, so this must run after `use_tab` for the tab the suite will drive.
+    ///
+    /// A device also overrides the user agent; `set viewport` only sets size and scale.
+    pub fn set_emulation(&mut self, emu: &Emulation) -> Result<AppliedEmulation> {
+        if self.applied.as_ref() == Some(emu) {
+            if let Some(i) = self.applied_info {
+                return Ok(i);
+            }
+        }
+        let info = if let Some(d) = &emu.device {
+            let d = d.clone();
+            let out = self.run(&["set", "device", &d])?;
+            let info = applied_of(&out);
+            self.log.push(format!(
+                "emulating device {d} ({}x{} at {}x, mobile: {})",
+                info.width,
+                info.height,
+                json_num(&out, "deviceScaleFactor"),
+                info.mobile
+            ));
+            info
+        } else if let Some(v) = &emu.viewport {
+            let mut args = vec![
+                "set".to_string(),
+                "viewport".to_string(),
+                v.width.to_string(),
+                v.height.to_string(),
+            ];
+            if let Some(s) = v.scale {
+                args.push(format!("{s}"));
+            }
+            let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let out = self.run(&argv)?;
+            let info = applied_of(&out);
+            self.log.push(format!(
+                "emulating viewport {}x{} at {}x",
+                v.width,
+                v.height,
+                json_num(&out, "deviceScaleFactor")
+            ));
+            info
+        } else {
+            // No device and no viewport: back to the plain browser window.
+            self.log.push("emulation cleared".to_string());
+            AppliedEmulation {
+                width: 0,
+                height: 0,
+                mobile: false,
+            }
+        };
+        self.applied = Some(emu.clone());
+        self.applied_info = Some(info);
+        if let Some(t) = &self.active_tab {
+            self.emulated_tabs.insert(t.clone());
+        }
+        Ok(info)
+    }
+
+    /// The window size of the browser before any emulation, read once from the page.
+    /// agent-browser has no "clear emulation" command, so this is how "the browser default"
+    /// is restored between suites.
+    pub fn remember_desktop_viewport(&mut self) {
+        if self.desktop.is_some() {
+            return;
+        }
+        let js = "JSON.stringify({w: innerWidth, h: innerHeight})";
+        if let Ok(Value::String(s)) = self.eval(js) {
+            if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                let (w, h) = (v["w"].as_f64(), v["h"].as_f64());
+                if let (Some(w), Some(h)) = (w, h) {
+                    if w >= 1.0 && h >= 1.0 {
+                        self.desktop = Some(Viewport {
+                            width: w as u32,
+                            height: h as u32,
+                            scale: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// An emulation that puts the tab back to the size the browser had before qaspec
+    /// emulated anything (`None` when the size could not be read).
+    pub fn desktop_emulation(&self) -> Option<Emulation> {
+        self.desktop.map(|v| Emulation {
+            device: None,
+            viewport: Some(v),
+        })
+    }
+
+    /// Puts `target` back on every tab this run emulated, so a later suite does not keep
+    /// running on the phone window size.
+    ///
+    /// Only the size: agent-browser 0.27 cannot undo a `set device` (see `device_suites_last`),
+    /// so suites that set a device are planned last and nothing runs after them.
+    pub fn restore_emulation_on_all(&mut self, target: Option<&Emulation>) -> Result<()> {
+        let Some(target) = target else {
+            self.emulated_tabs.clear();
+            return Ok(());
+        };
+        for label in std::mem::take(&mut self.emulated_tabs) {
+            self.use_tab(&label)?;
+            self.set_emulation(target)?;
+        }
+        Ok(())
     }
 
     pub fn state_save(&mut self, path: &str) -> Result<()> {
@@ -374,6 +510,24 @@ pub fn parse_response(stdout: &[u8], stderr: &[u8], what: &str) -> Result<Value>
                 .as_str()
                 .unwrap_or("agent-browser command failed")
         )
+    }
+}
+
+/// Size and mobile flag of a `set device` / `set viewport` response.
+fn applied_of(v: &Value) -> AppliedEmulation {
+    let num = |k: &str| v[k].as_f64().unwrap_or_default();
+    AppliedEmulation {
+        width: num("width") as u32,
+        height: num("height") as u32,
+        mobile: v["mobile"].as_bool().unwrap_or(false),
+    }
+}
+
+fn json_num(v: &Value, key: &str) -> String {
+    match v[key].as_f64() {
+        Some(n) if n.fract() == 0.0 => format!("{}", n as i64),
+        Some(n) => format!("{n}"),
+        None => "?".into(),
     }
 }
 

@@ -23,6 +23,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   recording a failure (`CACHE_MISSING` / `CACHE_REPLAY_FAILED`) with zero model calls, for CI.
 - Goal items in the JSON report carry `"cache": "replayed" | "recorded" | "agent"`, the terminal marks
   those steps with `(replayed)`, and the run summary counts goals replayed and recorded.
+- Mobile web: a suite can run on an emulated phone or tablet. `suite('x', { device: 'Pixel 7' })` in
+  the spec, `device` / `viewport` in `[projects.<p>]`, or a default in `[browser]`; precedence is
+  suite > project > browser and `qaspec check` prints what each suite will run on. The device is
+  applied before the suite's first step (on the tab that suite drives, since agent-browser applies
+  emulation per target) and fully undone after the suite, so a run mixing a phone suite with a
+  desktop one works. The agent is told `Viewport: iPhone 14, 390x844, mobile user agent`, so it
+  scrolls and opens menus as on a phone. Unknown option errors keep the `file:line:col` style.
+  `--set browser.device=<name>` and `--set projects.<p>.device=<name>` too.
+- `tests/fixtures/app/specs/app-mobile.qa.ts`: a deterministic mobile suite (no model call) that
+  proves the emulation reaches the page: CSS size, pixel ratio and the mobile user agent.
+- `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts`: a desktop suite that asserts a suite
+  without a `device` still runs at desktop size, with the desktop user agent, still signed in.
+- The demo app in `tests/fixtures/app` serves `<meta name="viewport">`, so its mobile layout is the
+  real one instead of the 980px fallback browsers use when the tag is missing.
 
 ### Changed
 - The website is now a Svelte 5 + Vite app in `site/`, deployed from the `gh-pages` branch. It renders
@@ -36,8 +50,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Mobile: 20px page gutters (sections had lost their side padding), a menu button, 44px touch targets, no horizontal scroll from 375px up, tables that become
   stacked rows, and a sticky "qaspec vs" switch that compares one tool at a time.
 - A yes/no comparison table of qaspec, regular E2E and agentic E2E (TesterArmy), on the website and
-  in the README. It includes the rows where qaspec loses: no parallel workers, no mobile apps. On
-  phones it stays a three-column table with short headers.
+  in the README. It includes the rows where qaspec loses: no parallel workers, no native mobile apps
+  (mobile *web* is now covered by device emulation). On phones it stays a three-column table with
+  short headers.
 - The detailed comparison now says that e2e sessions last one run and are never reused across runs.
 - New "How it compares" tables (writing tests, what a check can see, running them) against scripted
   E2E, e2e by TesterArmy and agent-browser alone, on the website and in the README.
@@ -50,6 +65,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 - The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at
   viewport coordinates, so off-screen elements were missed with no error.
+- A device's mobile user agent no longer leaks into later suites. agent-browser 0.27 cannot undo
+  `set device`: there is no desktop device name, the user-agent override survives `set viewport`,
+  and the only real undo (`--user-agent ""`) **relaunches the browser, closing every tab and
+  dropping every cookie**. qaspec therefore plans suites that set a `device` last and prints a note
+  in `qaspec run` and `qaspec check`, instead of restoring the user agent and breaking the session.
+  `viewport`-only suites still restore the window size and can run anywhere.
+  See `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts`.
 
 ## [0.1.0] - 2026-10-05
 

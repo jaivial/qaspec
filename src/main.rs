@@ -320,9 +320,32 @@ fn real_main(cli: Cli) -> Result<i32> {
                 planned.len(),
                 steps
             );
+            // The list below is the real run order, so say why a device suite is at the end.
+            let has_device = planned.iter().any(|p| {
+                cfg.suite_emulation(
+                    &p.project,
+                    p.suite.device.as_deref(),
+                    p.suite.viewport.map(|v| config::Viewport {
+                        width: v.width,
+                        height: v.height,
+                        scale: v.scale,
+                    }),
+                )
+                .device
+                .is_some()
+            });
             for p in &planned {
+                let device = cfg.suite_emulation(
+                    &p.project,
+                    p.suite.device.as_deref(),
+                    p.suite.viewport.map(|v| config::Viewport {
+                        width: v.width,
+                        height: v.height,
+                        scale: v.scale,
+                    }),
+                );
                 println!(
-                    "  {} › {}  [{}{}] {} step(s)",
+                    "  {} › {}  [{}{}] {} step(s){}",
                     p.file,
                     p.suite.name,
                     p.project,
@@ -331,7 +354,19 @@ fn real_main(cli: Cli) -> Result<i32> {
                         .as_ref()
                         .map(|i| format!(" as {i}"))
                         .unwrap_or_default(),
-                    p.suite.steps.len()
+                    p.suite.steps.len(),
+                    if device.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  on {}", device.describe())
+                    }
+                );
+            }
+            if has_device {
+                println!(
+                    "note: suites that set a `device` are listed last and run last: agent-browser \
+                     0.27 cannot undo the mobile user agent it installs, and the only way back \
+                     would relaunch the browser and lose the session"
                 );
             }
             Ok(0)

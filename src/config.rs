@@ -36,6 +36,8 @@ struct RawProject {
     #[serde(default)]
     depends_on: Vec<String>,
     locale: Option<String>,
+    device: Option<String>,
+    viewport: Option<Vec<f64>>,
     #[serde(default)]
     env: BTreeMap<String, RawProjectEnv>,
     #[serde(default)]
@@ -76,6 +78,8 @@ struct RawBrowser {
     headed: Option<bool>,
     session: Option<String>,
     command: Option<String>,
+    device: Option<String>,
+    viewport: Option<Vec<f64>>,
 }
 
 /// Where a secret value comes from. The value is read only when it is used.
@@ -140,6 +144,110 @@ pub struct ValidIf {
     pub js: Option<String>,
 }
 
+/// Device emulation for the browser: a named device or an explicit viewport.
+/// `device` wins over `viewport` (a device implies its own metrics).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Emulation {
+    /// Device name as agent-browser knows it (`set device "iPhone 14"`).
+    pub device: Option<String>,
+    /// `[width, height]` or `[width, height, scale]`.
+    pub viewport: Option<Viewport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+    /// Device pixel ratio (`set viewport <w> <h> [scale]`).
+    pub scale: Option<f64>,
+}
+
+impl Emulation {
+    pub fn is_empty(&self) -> bool {
+        self.device.is_none() && self.viewport.is_none()
+    }
+
+    /// One line for the run output: what was asked of agent-browser.
+    pub fn describe(&self) -> String {
+        match (&self.device, &self.viewport) {
+            (Some(d), _) => d.clone(),
+            (None, Some(v)) => match v.scale {
+                Some(s) => format!("{}x{} at {}x", v.width, v.height, s),
+                None => format!("{}x{}", v.width, v.height),
+            },
+            (None, None) => String::new(),
+        }
+    }
+
+    /// One line for the agent, including what agent-browser reports once applied: the size and
+    /// whether a mobile user agent is in play (`set device` implies `mobile: true`).
+    ///
+    /// Deliberately no "touch": agent-browser 0.27 emulates the size and the user agent but not
+    /// touch (a real run reports `navigator.maxTouchPoints === 0`), and telling the agent it
+    /// can tap would have it click things a mouse cannot reach.
+    pub fn describe_for_agent(&self, applied: Option<&AppliedEmulation>) -> String {
+        let Some(a) = applied else {
+            return self.describe();
+        };
+        let size = format!("{}x{}", a.width, a.height);
+        match &self.device {
+            Some(d) if a.mobile => format!("{d}, {size}, mobile user agent"),
+            Some(d) => format!("{d}, {size}"),
+            None if a.mobile => format!("{size}, mobile user agent"),
+            None => size,
+        }
+    }
+}
+
+/// What agent-browser answered after a `set device` / `set viewport`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppliedEmulation {
+    pub width: u32,
+    pub height: u32,
+    /// `mobile: true` from agent-browser (a phone/tablet layout, not just a narrow window).
+    pub mobile: bool,
+}
+
+/// Reads `device`/`viewport` from a raw TOML table, checking the shapes.
+fn emulation_from(
+    device: &Option<String>,
+    viewport: &Option<Vec<f64>>,
+    what: &str,
+) -> Result<Emulation> {
+    let device = device.clone().filter(|d| !d.trim().is_empty());
+    if let Some(d) = &device {
+        if d.contains('"') || d.contains('\n') {
+            bail!("{what}.device `{d}` is not a device name");
+        }
+    }
+    let vp = match viewport {
+        None => None,
+        Some(v) => {
+            if v.len() < 2 || v.len() > 3 {
+                bail!("{what}.viewport needs [width, height] or [width, height, scale], got {v:?}");
+            }
+            let (w, h) = (v[0], v[1]);
+            if w < 1.0 || h < 1.0 {
+                bail!("{what}.viewport: width and height must be positive, got {v:?}");
+            }
+            let scale = match v.as_slice() {
+                [_, _, s] if *s > 0.0 => Some(*s),
+                [_, _, s] => bail!("{what}.viewport: scale must be positive, got {s}"),
+                _ => None,
+            };
+            Some(Viewport {
+                width: w as u32,
+                height: h as u32,
+                scale,
+            })
+        }
+    };
+    Ok(Emulation {
+        device,
+        viewport: vp,
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct Project {
     pub name: String,
@@ -149,6 +257,8 @@ pub struct Project {
     pub depends_on: Vec<String>,
     pub locale: Option<String>,
     pub identities: BTreeMap<String, Identity>,
+    /// Device or viewport this project's suites run on (overridden by `[browser]` only if unset).
+    pub emulation: Emulation,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +286,8 @@ pub struct Browser {
     pub headed: bool,
     pub session: Option<String>,
     pub command: String,
+    /// Default device emulation for every suite (suite/project options take precedence).
+    pub emulation: Emulation,
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +418,7 @@ impl Config {
                     depends_on: p.depends_on.clone(),
                     locale: p.locale.clone(),
                     identities,
+                    emulation: emulation_from(&p.device, &p.viewport, &format!("projects.{name}"))?,
                 },
             );
         }
@@ -345,6 +458,7 @@ impl Config {
                     .browser
                     .command
                     .unwrap_or_else(|| "agent-browser".into()),
+                emulation: emulation_from(&raw.browser.device, &raw.browser.viewport, "[browser]")?,
             },
         };
         for (k, v) in &ov.set {
@@ -377,7 +491,15 @@ impl Config {
                 l.judge_explicit = true;
             }
             ["browser", "headed"] => self.browser.headed = value == "true",
-            _ => bail!("--set {key}: unsupported key (use params.<name>, projects.<p>.base_url, llm.base_url, llm.actor, llm.judge, browser.headed)"),
+            ["browser", "device"] => self.browser.emulation.device = Some(value.to_string()),
+            ["projects", p, "device"] => {
+                self.projects
+                    .get_mut(*p)
+                    .ok_or_else(|| anyhow!("--set {key}: unknown project `{p}`"))?
+                    .emulation
+                    .device = Some(value.to_string());
+            }
+            _ => bail!("--set {key}: unsupported key (use params.<name>, projects.<p>.base_url, projects.<p>.device, llm.base_url, llm.actor, llm.judge, browser.headed, browser.device)"),
         }
         Ok(())
     }
@@ -465,6 +587,29 @@ impl Config {
             return Ok(format!("{base}/"));
         }
         Ok(format!("{base}/{}", path.trim_start_matches('/')))
+    }
+
+    /// Emulation for a suite: `suite > project > browser`.
+    /// The most specific level that sets anything wins, so a suite with `device` never keeps
+    /// the project's viewport (a device implies its own metrics).
+    pub fn suite_emulation(
+        &self,
+        project: &str,
+        device: Option<&str>,
+        viewport: Option<Viewport>,
+    ) -> Emulation {
+        let from_suite = Emulation {
+            device: device.map(|d| d.to_string()),
+            viewport,
+        };
+        if !from_suite.is_empty() {
+            return from_suite;
+        }
+        self.projects
+            .get(project)
+            .map(|p| p.emulation.clone())
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| self.browser.emulation.clone())
     }
 
     pub fn state_dir(&self) -> PathBuf {
@@ -575,6 +720,184 @@ actor = "m1"
             value: None,
         };
         assert_eq!(s.read(dir.path()).unwrap(), "fromfile");
+    }
+
+    const MOBILE: &str = r#"
+[projects.app]
+base_url = "http://x"
+[projects.app.env.dev]
+base_url = "http://y"
+[projects.phone]
+base_url = "http://z"
+device = "Pixel 7"
+viewport = [412, 915, 3]
+[projects.tablet]
+base_url = "http://t"
+[browser]
+device = "iPhone 14"
+viewport = [1280, 720]
+"#;
+
+    fn mobile() -> Config {
+        Config::from_str(MOBILE, PathBuf::from("/r"), &Overrides::default()).unwrap()
+    }
+
+    #[test]
+    fn emulation_is_read_from_every_level() {
+        let c = mobile();
+        assert_eq!(c.browser.emulation.device.as_deref(), Some("iPhone 14"));
+        assert_eq!(c.browser.emulation.viewport.unwrap().width, 1280);
+        let app = c.projects["app"].emulation.clone();
+        assert!(app.is_empty(), "a project without options sets nothing");
+        let phone = c.projects["phone"].emulation.clone();
+        assert_eq!(phone.device.as_deref(), Some("Pixel 7"));
+        let vp = phone.viewport.unwrap();
+        assert_eq!((vp.width, vp.height, vp.scale), (412, 915, Some(3.0)));
+        assert_eq!(phone.describe(), "Pixel 7");
+        assert_eq!(c.projects["tablet"].emulation.describe(), "");
+    }
+
+    #[test]
+    fn emulation_precedence_is_suite_then_project_then_browser() {
+        let c = mobile();
+        let vp = spec_viewport(360, 640, None);
+        // No suite option: the project wins over [browser].
+        let e = c.suite_emulation("phone", None, None);
+        assert_eq!(e.device.as_deref(), Some("Pixel 7"));
+        // No project option either: [browser].
+        assert_eq!(
+            c.suite_emulation("app", None, None).device.as_deref(),
+            Some("iPhone 14")
+        );
+        // A suite device replaces the project's device AND its viewport (a device has metrics).
+        let e = c.suite_emulation("phone", Some("iPhone 14"), None);
+        assert_eq!(e.device.as_deref(), Some("iPhone 14"));
+        assert_eq!(e.viewport, None);
+        // A suite viewport replaces the project's device as well.
+        let e = c.suite_emulation("phone", None, Some(vp));
+        assert_eq!(e.device, None);
+        assert_eq!(e.viewport.unwrap().width, 360);
+        // A suite viewport on a project without options still beats [browser].
+        let e = c.suite_emulation("app", None, Some(vp));
+        assert_eq!(e.viewport.unwrap().height, 640);
+        assert_eq!(e.device, None);
+    }
+
+    /// The viewport a spec suite carries, in config form.
+    fn spec_viewport(w: u32, h: u32, scale: Option<f64>) -> Viewport {
+        Viewport {
+            width: w,
+            height: h,
+            scale,
+        }
+    }
+
+    #[test]
+    fn emulation_descriptions() {
+        let mob = AppliedEmulation {
+            width: 390,
+            height: 844,
+            mobile: true,
+        };
+        let desk = AppliedEmulation {
+            width: 1280,
+            height: 720,
+            mobile: false,
+        };
+        let device = Emulation {
+            device: Some("iPhone 14".into()),
+            viewport: None,
+        };
+        assert_eq!(
+            device.describe_for_agent(Some(&mob)),
+            "iPhone 14, 390x844, mobile user agent",
+            "the agent is told the device, the size and that the user agent is mobile \u{2014} never \
+             \"touch\", which agent-browser 0.27 does not emulate"
+        );
+        assert_eq!(
+            device.describe_for_agent(Some(&desk)),
+            "iPhone 14, 1280x720"
+        );
+        assert_eq!(device.describe_for_agent(None), "iPhone 14");
+        let vp = Emulation {
+            device: None,
+            viewport: Some(Viewport {
+                width: 390,
+                height: 844,
+                scale: Some(3.0),
+            }),
+        };
+        assert_eq!(vp.describe(), "390x844 at 3x");
+        assert_eq!(
+            vp.describe_for_agent(Some(&mob)),
+            "390x844, mobile user agent"
+        );
+        assert!(
+            !vp.describe_for_agent(Some(&mob)).contains("touch"),
+            "touch is not emulated, so the agent must not be told about it"
+        );
+        assert_eq!(
+            vp.describe_for_agent(Some(&desk)),
+            "1280x720",
+            "the size is what agent-browser reports, not what was asked for"
+        );
+        assert_eq!(Emulation::default().describe_for_agent(None), "");
+    }
+
+    #[test]
+    fn emulation_validation() {
+        let bad = |t: &str| {
+            Config::from_str(t, PathBuf::from("."), &Overrides::default())
+                .unwrap_err()
+                .to_string()
+        };
+        let one = |v: &str| format!("[projects.a]\nbase_url='http://x'\n{v}");
+        assert!(bad(&one("viewport = [390]")).contains("viewport needs"));
+        assert!(bad(&one("viewport = [390, 844, 3, 1]")).contains("viewport needs"));
+        assert!(bad(&one("viewport = [0, 844]")).contains("must be positive"));
+        assert!(bad(&one("viewport = [390, 844, 0]")).contains("scale must be positive"));
+        // A non-number never reaches the check: TOML refuses the array itself.
+        assert!(
+            bad("[browser]\nviewport = ['a']\n[projects.a]\nbase_url='http://x'")
+                .contains("invalid type")
+        );
+        assert!(bad(&one("device = 'say \"hi\"'")).contains("not a device name"));
+        // An empty device means "not set", so [browser] still applies.
+        let c = Config::from_str(
+            "[projects.a]\nbase_url='http://x'\ndevice=''\n[browser]\ndevice='iPhone 14'",
+            PathBuf::from("."),
+            &Overrides::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            c.suite_emulation("a", None, None).device.as_deref(),
+            Some("iPhone 14")
+        );
+    }
+
+    #[test]
+    fn device_can_be_set_from_the_command_line() {
+        let c = Config::from_str(
+            MOBILE,
+            PathBuf::from("."),
+            &Overrides {
+                env: None,
+                set: vec![
+                    ("browser.device".into(), "Galaxy S25".into()),
+                    ("projects.phone.device".into(), "Pixel 9".into()),
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(c.browser.emulation.device.as_deref(), Some("Galaxy S25"));
+        assert_eq!(
+            c.projects["phone"].emulation.device.as_deref(),
+            Some("Pixel 9")
+        );
+        assert_eq!(
+            c.suite_emulation("phone", None, None).device.as_deref(),
+            Some("Pixel 9")
+        );
     }
 
     #[test]
