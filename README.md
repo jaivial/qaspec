@@ -92,14 +92,15 @@ Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is [e2e by Te
 | Console and network checks built in | ✅ | ❌ | ❌ |
 | Ordered checks sharing browser state | ✅ | ✅ | ✅ |
 | Sign-in reused across runs | ✅ | ✅ | ❌ (once per run) |
-| One browser for the whole run | ✅ | ❌ | ❌ |
+| One browser for the whole run | ✅ (default) | ❌ | ❌ |
 | Dependent apps: health, order, shared data | ✅ | ❌ | ❌ |
 | Passwords never reach the model | ✅ | ✅ (no model) | ✅ |
-| Runs without calling a model | ✅ (exact checks + replay cache) | ✅ | ✅ (from the cache) |
 | Replay cache for unchanged UI | ✅ | ✅ (no model) | ✅ |
-| Parallel workers | ❌ | ✅ | ✅ |
-| Mobile web (device emulation) | ✅ | ✅ | ❌ |
-| Mobile apps (iOS, Android) | ❌ | ✅ (Appium, Detox) | ✅ |
+| Goals run without a model call | ✅ (from the cache) | ✅ (no model) | ✅ (from the cache) |
+| Judged checks without a model call | ❌ | ✅ (no model) | ❌ |
+| Parallel workers | ✅ (opt-in, --jobs) | ✅ | ✅ |
+| Mobile web (device emulation) | ✅ (device = …) | ✅ | ✅ |
+| Native mobile apps (iOS, Android) | ❌ | ✅ (appium, Detox) | ✅ |
 | Single binary, no Node runtime | ✅ | ❌ | ❌ |
 
 In detail, with agent-browser on its own as a fourth column:

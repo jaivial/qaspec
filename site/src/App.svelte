@@ -4,6 +4,7 @@
   import Code from './lib/Code.svelte';
   import Compare from './lib/Compare.svelte';
   import Checks from './lib/Checks.svelte';
+  import { checkCols, checkRows, columns, writing, seeing, running } from './data/compare.js';
   import Figure from './lib/Figure.svelte';
   import run from './data/run.txt?raw';
   import report from './data/report.json';
@@ -17,55 +18,6 @@
   const install = 'cargo install --git https://github.com/jaivial/qaspec --tag v0.1.0';
 
   const nav = [['#how', 'How it works'], ['#checks', 'Compare'], ['#config', 'Config'], ['#reference', 'Reference']];
-
-  // Yes/no comparison of the three approaches. Every row is checked against the e2e 0.16 docs;
-  // rows where qaspec loses stay in.
-  const checkCols = ['qaspec', ['Regular E2E', 'Regular'], ['Agentic E2E (TesterArmy)', 'Agentic']];
-  const checkRows = [
-    ['Tests written without selectors', true, false, [true, 'Mixed with locators']],
-    ['Survives UI changes without edits', true, false, true],
-    ['Judges the screen like a person', true, false, true],
-    ['The model sees console errors', true, false, false],
-    ['The model sees network requests', true, false, false],
-    ['Console and network checks built in', true, false, false],
-    ['Ordered checks sharing browser state', true, true, true],
-    ['Sign-in reused across runs', true, true, [false, 'Once per run']],
-    ['One browser for the whole run', true, false, false],
-    ['Dependent apps: health, order, shared data', true, false, false],
-    ['Passwords never reach the model', true, [true, 'No model'], true],
-    ['Runs without calling a model', [false, 'Exact checks only'], true, [true, 'From the cache']],
-    ['Replay cache for unchanged UI', false, [true, 'No model'], true],
-    ['Parallel workers', false, true, true],
-    ['Mobile apps (iOS, Android)', false, [true, 'Appium, Detox'], true],
-    ['Single binary, no Node runtime', true, false, false]
-  ];
-
-  // Columns: qaspec, scripted E2E (Playwright/Cypress), e2e by TesterArmy, agent-browser on its own.
-  const columns = ['qaspec', 'Scripted E2E', 'e2e (TesterArmy)', 'agent-browser alone'];
-
-  const writing = [
-    ['What you write', 'Goals and expectations', 'Locators, waits, helpers', ['Code plus agent steps', 'agent.act / agent.assert in TypeScript'], 'Prompts to a coding agent'],
-    ['Test file', ['Declarative .qa.ts', 'Parsed, never executed'], 'Executable TS/JS', 'Executable TypeScript', ['None', 'No test format']],
-    ['Survives UI changes', ['yes', 'The agent finds the control again'], ['no', 'Selectors break'], ['yes', 'Plus a replay cache'], ['partial', 'If you re-prompt']],
-    ['Many checks in order, shared state', ['yes', 'Steps in a suite'], ['yes', 'Inside one test'], ['partial', 'serial groups'], ['partial', 'Manual']],
-    ['Repeatable in CI', ['yes', 'Exit codes, JSON, JUnit'], 'yes', 'yes', ['no', 'Interactive tool']]
-  ];
-
-  const seeing = [
-    ['Judges the screen like a person', ['yes', "expect('…') with evidence"], 'no', ['yes', 'agent.assert'], ['partial', 'You read it']],
-    ['Console errors per step', ['yes', 'expect.console.noErrors()'], ['partial', 'Hand-written listeners'], ['no', 'Hidden from the model'], ['partial', 'console command']],
-    ['Network status per step', ['yes', "expect.network('POST /x').status(201)"], ['partial', 'waitForResponse'], ['no', 'Hidden from the model'], ['partial', 'network requests']],
-    ['App state (JS, localStorage)', ['yes', 'expect.state, expect.storage'], ['yes', 'page.evaluate'], ['partial', 'Not to the model'], ['partial', 'eval']],
-    ['Secrets kept from the model', ['yes', 'Typed via stdin, redacted'], ['partial', 'No model involved'], 'yes', ['no', 'Whatever you paste']]
-  ];
-
-  const running = [
-    ['Browsers per run', ['1 Chromium', 'One tab per project'], ['1 context per test', 'Workers in parallel'], ['1 context per test', 'Workers in parallel'], ['1 per session', 'You manage it']],
-    ['Sign in', ['Once per identity', 'Saved state reused across runs'], 'Setup project + storageState', ['Setup test, once per run', 'Sessions are never reused across runs'], 'state save / load by hand'],
-    ['Several apps that depend on each other', ['yes', 'depends_on, health, captures'], ['partial', 'Projects, by hand'], ['partial', 'Targets'], 'no'],
-    ['Runtime', 'One Rust binary + agent-browser', 'Node + browsers', 'Node 22.12+ + Playwright', 'agent-browser'],
-    ['Model calls per run', ['Every goal and judged check', 'No replay cache yet'], 'None', ['Fewer after the first run', 'Replay cache'], 'Every step']
-  ];
 
   // On narrow screens the comparison shows qaspec against one tool at a time.
   let versus = $state(1);
@@ -118,7 +70,7 @@
         <a class="btn primary" href="#install">Install qaspec</a>
         <a class="btn" href="{repo}/releases/latest">Download v{version}</a>
       </div>
-      <p class="facts">One Rust binary · one browser per run · MIT</p>
+      <p class="facts">One Rust binary · one browser per run by default · replays goals without the model · MIT</p>
     </div>
     <Code code={agentSpec} title="specs/todos.qa.ts" />
   </section>
@@ -156,7 +108,7 @@
 
   <section class="wrap" id="checks">
     <h2>qaspec, regular E2E and agentic E2E</h2>
-    <p class="sub">Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is <a href="https://github.com/tester-army/e2e">e2e by TesterArmy</a>, where an agent acts and asserts but never sees the console or network. The rows where qaspec loses are in the table too.</p>
+    <p class="sub">Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is <a href="https://github.com/tester-army/e2e">e2e by TesterArmy</a>, where an agent acts and asserts but never sees the console or network. The rows where qaspec loses are in the table too: judged checks always call a model, and native mobile apps are out of scope.</p>
     <Checks caption="qaspec, regular E2E and agentic E2E compared" columns={checkCols} rows={checkRows} />
     <p class="note">Notes under some marks explain them; on a phone they are in the detailed tables below. Based on the e2e 0.16 docs.</p>
   </section>
@@ -177,6 +129,16 @@
     <h3 class="tbl-h">Running them</h3>
     <Compare caption="Running them" {columns} rows={running} {versus} />
     <p class="note">Based on e2e 0.16 and agent-browser 0.27 docs, and on porting a real two-app suite. Scripted E2E means Playwright or Cypress. Corrections welcome as <a href="{repo}/issues">issues</a>.</p>
+  </section>
+
+  <section class="wrap" id="new">
+    <h2>New since 0.1.0</h2>
+    <p class="sub">On <code>main</code>, not in a release yet. Build from source to try it.</p>
+    <dl class="rows">
+      <div><dt>Replay cache</dt><dd>A goal that passed is recorded as role and name locators. The next run replays it without the model, and the agent takes over only where the page changed. In the demo, a second run went from 8 model calls to 4, and from 24 to 18 seconds. <code>--cache strict</code> fails on a missing or stale recording, for CI.</dd></div>
+      <div><dt>Parallel workers</dt><dd><code>--jobs N</code> splits suites across N browsers, keeping each sign-in, dependency and capture in one worker. A memory guard lowers N to what fits at about 1.5 GB per browser. One browser stays the default.</dd></div>
+      <div><dt>Mobile web</dt><dd><code>device: 'iPhone 14'</code> on a suite, project or the whole run emulates the phone's size, pixel ratio and user agent, and tells the agent to look for menus and scroll. Suites with a device run last, because agent-browser cannot undo the mobile user agent without relaunching.</dd></div>
+    </dl>
   </section>
 
   <section class="wrap" id="install">

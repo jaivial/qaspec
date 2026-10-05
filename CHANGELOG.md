@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+Built with three subagents running MiniMax-M3.1-Flash-Preview, one per feature, each in its own git
+worktree. Every result was reviewed and re-run by the orchestrating session before merging; see the
+merge commits for the review rounds.
+
+### Website
+- The comparison tables live in one module (`site/src/data/compare.js`), shared by the site, the
+  screenshot views and the README table, so they can't drift apart. They now cover the replay cache,
+  parallel workers and mobile web. Judged checks still call a model, and native mobile apps are out of
+  scope; both rows stay in.
+- New "New since 0.1.0" section on the site.
+
 ### Added
 - **Replay cache for goals.** A goal that passed with all of its expectations passing is recorded as
   the sequence of browser actions the agent performed, in `.qaspec/cache/<env>/<sha>.json` (mode 600).
