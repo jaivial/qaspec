@@ -254,9 +254,10 @@ implies its own metrics. `qaspec check` prints what each suite will run on:
 specs/checkout.qa.ts > checkout  [shop as buyer] 4 step(s)  on Pixel 7
 ```
 
-The device is applied before the suite's first step and fully undone after it, so a run that mixes
-a phone suite with a desktop suite still runs the desktop one at desktop size **with the desktop
-user agent** (see below). Only the tab the suite
+The device is applied before the suite's first step. A run that mixes a phone suite with a desktop
+suite still runs the desktop ones first, at desktop size and with the desktop user agent, and the
+phone suite last: agent-browser cannot undo a `set device` without relaunching the browser and
+losing the session (see below). `qaspec check` lists the suites in that order and prints the note. Only the tab the suite
 drives is touched (agent-browser applies emulation per target). If agent-browser does not know the
 device, the suite is `blocked` and reports the names it accepts.
 
@@ -291,14 +292,17 @@ Measured with agent-browser 0.27 on Chromium, reading `navigator` and `innerWidt
   `set device` applies to the active tab only, and new tabs start with the last window size but the
   desktop user agent — so qaspec applies the device to the suite's tab after switching to it.
 - **There is no "clear emulation"** in agent-browser 0.27, no desktop device name to undo a
-  `set device` with, and a device's user-agent override survives a later `set viewport`. Restoring
-  the size alone is not enough: a later desktop suite would still be served `... iPhone ...`, so a
-  spec asserting `navigator.userAgent.includes("iPhone")` is falsy would fail even though the
-  window is 1280 wide. qaspec therefore undoes both: it reads the window size before it emulates
-  anything, writes it back with `set viewport`, and drops the user-agent override with the global
-  `--user-agent ""` (an empty override means "use the browser's real user agent"). Both are applied
-  to every tab the run emulated, and both survive navigation and later tabs.
-  `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts` is the regression test for this.
+  `set device` with, and a device's user-agent override survives a later `set viewport`. So a
+  desktop suite that ran after a mobile one would still be served `... iPhone ...`, and a spec
+  asserting `navigator.userAgent.includes("iPhone")` is falsy would fail at a 1280px window. The
+  only real undo is the global `--user-agent ""` (an empty override means "use the browser's real
+  user agent"), and **that relaunches the browser: every tab closes and every cookie is lost**
+  (measured — `tab list` comes back as a single `about:blank` and `cookies get` as `[]`). Losing
+  the session is worse than the stale user agent, so qaspec does not restore it: **suites that set
+  a `device` are planned last**, and the run prints a note saying so. `set viewport` is different:
+  it only changes the window size, which qaspec *does* restore, so a `viewport`-only suite can sit
+  anywhere in the run. `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts` is the regression
+  test, and it checks the session survived, not just the size.
 - **iOS Simulator (`-p ios`) is not implemented**: it needs Xcode and only runs on macOS. On Linux
   and CI, `set device` gives a mobile Chromium with the iOS user agent.
 

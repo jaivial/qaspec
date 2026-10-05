@@ -147,7 +147,45 @@ pub fn plan(cfg: &Config, files: &[SpecFile]) -> Result<Vec<Planned>> {
             );
         }
     }
-    Ok(out)
+    Ok(device_suites_last(out, cfg))
+}
+
+/// What a suite runs on, if it emulates anything.
+fn emulation_of(cfg: &Config, p: &Planned) -> Option<Emulation> {
+    let e = cfg.suite_emulation(
+        &p.project,
+        p.suite.device.as_deref(),
+        p.suite.viewport.map(config_viewport),
+    );
+    (!e.is_empty()).then_some(e)
+}
+
+/// Whether a suite sets a `device` and not just a `viewport`.
+///
+/// A device also overrides the user agent, and agent-browser 0.27 cannot put it back: it has no
+/// "clear emulation", no desktop device name, and the only undo (`--user-agent ""`) relaunches
+/// the browser, losing every tab and every cookie. So a device suite has to be the last one in
+/// the session. `set viewport` only resizes the window, which qaspec does restore, so a suite
+/// with only a `viewport` is harmless anywhere in the run.
+fn is_device_suite(cfg: &Config, p: &Planned) -> bool {
+    emulation_of(cfg, p).is_some_and(|e| e.device.is_some())
+}
+
+/// Moves every device suite to the end of the plan, keeping the order of the rest.
+///
+/// agent-browser applies `set device` to the whole browser and cannot undo the user agent, so
+/// running a device suite in the middle would hand `... iPhone ...` to every later suite. This is
+/// a stable partition, so it also keeps project order and identity grouping intact, and it only
+/// moves suites within the position their dependencies already gave them (projects still run in
+/// dependency order, so a project that `depends_on` another is unaffected).
+fn device_suites_last(plan: Vec<Planned>, cfg: &Config) -> Vec<Planned> {
+    if !plan.iter().any(|p| is_device_suite(cfg, p)) {
+        return plan;
+    }
+    let (mut plain, mut devices): (Vec<Planned>, Vec<Planned>) =
+        plan.into_iter().partition(|p| !is_device_suite(cfg, p));
+    plain.append(&mut devices);
+    plain
 }
 
 /// Finds spec files: explicit paths (files or dirs), else each project's `specs` glob, else `**/*.qa.ts`.
@@ -400,6 +438,13 @@ impl<'a> Runner<'a> {
             ));
         }
         let mut report = Report::new(&self.run_id, &self.cfg.env, self.browser.session());
+        if !self.opts.quiet && planned.iter().any(|p| is_device_suite(self.cfg, p)) {
+            eprintln!(
+                "note: suites that set a `device` run last: agent-browser 0.27 cannot undo the \
+                 mobile user agent it installs, and the only way back relaunches the browser and \
+                 loses the session"
+            );
+        }
         for p in planned {
             let r = self.run_suite(p);
             report.suites.append(&mut self.setup_results);
@@ -913,12 +958,7 @@ impl<'a> Runner<'a> {
 
     /// The emulation a suite runs with (`suite > project > browser`).
     fn suite_emulation(&self, p: &Planned) -> Option<Emulation> {
-        let e = self.cfg.suite_emulation(
-            &p.project,
-            p.suite.device.as_deref(),
-            p.suite.viewport.map(config_viewport),
-        );
-        (!e.is_empty()).then_some(e)
+        emulation_of(self.cfg, p)
     }
 
     /// Puts back what the previous suite had. With no previous emulation the tabs go back to the
@@ -1742,6 +1782,43 @@ mod tests {
         assert_eq!(names, vec!["a", "c"]);
         assert_eq!(f["origins"].as_array().unwrap().len(), 1);
         assert_eq!(host_of("http://localhost:8080/x"), "localhost");
+    }
+
+    #[test]
+    fn device_suites_are_planned_last() {
+        let c = Config::from_str(
+            "[projects.app]\nbase_url='http://app.local:9'\nspecs='specs/app/*.qa.ts'\n[projects.admin]\nbase_url='http://admin.local:9'\nspecs='specs/admin/*.qa.ts'\ndepends_on=['app']\n[browser]\nviewport=[1280,720]",
+            PathBuf::from("/root"),
+            &Overrides::default(),
+        )
+        .unwrap();
+        // A device suite first, then plain ones, then a viewport-only suite.
+        let step = "step('s', () => { expect.url().toContain('/'); });";
+        let src = format!(
+            "suite('m', {{ device: 'iPhone 14' }}, () => {{ {step} }});\
+             suite('d', () => {{ {step} }});\
+             suite('v', {{ viewport: [390,844] }}, () => {{ {step} }});\
+             suite('e', () => {{ {step} }});"
+        );
+        let f = spec::parse("specs/app/x.qa.ts", &src).unwrap();
+        let names =
+            |p: &[Planned]| -> Vec<String> { p.iter().map(|x| x.suite.name.clone()).collect() };
+
+        let got = names(&plan(&c, std::slice::from_ref(&f)).unwrap());
+        assert_eq!(
+            got,
+            vec!["d", "v", "e", "m"],
+            "the device suite moves to the end, the rest keep their order (a viewport-only \
+             suite only changes the window size, which qaspec restores)"
+        );
+
+        // With no device anywhere the plan is untouched.
+        let plain = spec::parse(
+            "specs/app/x.qa.ts",
+            &format!("suite('a', () => {{ {step} }}); suite('b', () => {{ {step} }});"),
+        )
+        .unwrap();
+        assert_eq!(names(&plan(&c, &[plain]).unwrap()), vec!["a", "b"]);
     }
 
     #[test]

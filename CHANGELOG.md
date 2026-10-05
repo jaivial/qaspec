@@ -65,11 +65,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Fixed
 - The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at
   viewport coordinates, so off-screen elements were missed with no error.
-- A device's mobile user agent no longer leaks into later suites. agent-browser 0.27 has no way to
-  undo `set device` (no desktop device name, and the user-agent override survives `set viewport`),
-  so a suite without a `device` that ran after a mobile one was still served `... iPhone ...` at the
-  restored window size. qaspec now also drops the override with `--user-agent ""` on every tab the
-  run emulated. See `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts`.
+- A device's mobile user agent no longer leaks into later suites. agent-browser 0.27 cannot undo
+  `set device`: there is no desktop device name, the user-agent override survives `set viewport`,
+  and the only real undo (`--user-agent ""`) **relaunches the browser, closing every tab and
+  dropping every cookie**. qaspec therefore plans suites that set a `device` last and prints a note
+  in `qaspec run` and `qaspec check`, instead of restoring the user agent and breaking the session.
+  `viewport`-only suites still restore the window size and can run anywhere.
+  See `tests/fixtures/app/specs/app-desktop-after-mobile.qa.ts`.
 
 ## [0.1.0] - 2026-10-05
 
