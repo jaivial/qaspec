@@ -52,8 +52,10 @@ qaspec sits in between: **an agent that clicks like a person and inspects like a
 - **Replay cache.** A goal that passed (and whose expectations passed) is recorded as browser
   actions with semantic locators. If the UI is unchanged, the next run replays them and makes **zero
   model calls** for that goal; if the UI moved, the agent takes over and the recording is rewritten.
-- **Config, not code.** Base URLs per environment, credentials as secrets, params, and projects that
-  depend on each other all live in `qaspec.toml`.
+- **Mobile web.** A suite can run on an emulated phone (`suite('x', { device: 'iPhone 14' })`), and
+  the agent is told the window is small so it scrolls and opens menus instead of hovering.
+- **Config, not code.** Base URLs per environment, credentials as secrets, params, the device a
+  suite runs on, and projects that depend on each other all live in `qaspec.toml`.
 - **Secrets stay secret.** The model only sees secret *names*. Values are typed through
   agent-browser's stdin, never argv, and redacted from every log and report.
 - **Single Rust binary.** agent-browser is the only runtime dependency.
@@ -95,6 +97,7 @@ Regular E2E is a scripted Playwright or Cypress suite. Agentic E2E is [e2e by Te
 | Runs without calling a model | ✅ (exact checks + replay cache) | ✅ | ✅ (from the cache) |
 | Replay cache for unchanged UI | ✅ | ✅ (no model) | ✅ |
 | Parallel workers | ❌ | ✅ | ✅ |
+| Mobile web (device emulation) | ✅ | ✅ | ❌ |
 | Mobile apps (iOS, Android) | ❌ | ✅ (Appium, Detox) | ✅ |
 | Single binary, no Node runtime | ✅ | ❌ | ❌ |
 
@@ -112,6 +115,7 @@ In detail, with agent-browser on its own as a fourth column:
 | Browsers per run | 1 Chromium, one tab per project | A context per test, parallel workers | A context per test, parallel workers | One per session, by hand |
 | Sign in | Once per identity, reused across runs | Setup project + `storageState` | Setup test, once per run (sessions are never reused across runs) | `state save` / `load` by hand |
 | Several dependent apps | `depends_on`, health checks, captures | Projects, by hand | Targets | No |
+| Mobile web | `device: 'iPhone 14'` per suite/project/browser, and the agent is told to scroll and use menus | `devices['iPhone 14']` by hand | Not built in | `set device`, by hand |
 | Runtime | One Rust binary + agent-browser | Node + browsers | Node 22.12+ + Playwright | agent-browser |
 | Model calls | Every goal and judged check the first time, then only the judged checks | None | Fewer after the first run | Every step |
 
@@ -165,6 +169,7 @@ valid_if = { url_not = "/login" }           # or { js = "!!window.currentUser" }
 [projects.admin]
 specs = "specs/admin/**/*.qa.ts"
 depends_on = ["app"]                        # run after app; blocked if app is down
+device = "Pixel 7"                          # mobile web: this project's suites run on a phone
 [projects.admin.env.local]
 base_url = "http://localhost:4000"
 
@@ -182,17 +187,20 @@ judge    = "gpt-4.1-mini"                   # judges expect('...') (defaults to 
 [browser]
 headed = false
 # session = "my-session"                    # attach to an existing agent-browser session
+device = "iPhone 14"                        # default device for every suite (see "Mobile web")
+# viewport = [390, 844, 3]                  # or an explicit [width, height, scale]
 ```
 
 Precedence, from lowest to highest: the file, then `[env.<env>]`, then `QASPEC_PARAM_<NAME>` /
 `QASPEC_<PROJECT>_BASE_URL`, then `--set`. You can override `params.<name>`,
-`projects.<p>.base_url`, `llm.base_url`, `llm.actor`, `llm.judge` and `browser.headed`.
+`projects.<p>.base_url`, `projects.<p>.device`, `llm.base_url`, `llm.actor`, `llm.judge`,
+`browser.headed` and `browser.device`.
 
 ## Spec reference
 
 | Call | Meaning |
 |---|---|
-| `suite(name, { project?, as?, start? }, () => {...})` | A journey. `as` = identity, `start` = first URL (default `/`). |
+| `suite(name, { project?, as?, start?, device?, viewport? }, () => {...})` | A journey. `as` = identity, `start` = first URL (default `/`), `device` / `viewport` = run it on an emulated phone (see [Mobile web](#mobile-web)). |
 | `step(name, { start?, onFail?, needs?, project?, as? }, () => {...})` | One verdict. Inherits the browser state unless `start` is given. `onFail`: `stop` (default; later state-dependent steps are skipped), `continue`, `abort`. `needs`: earlier steps that must have passed. A `project` change opens that project's tab. |
 | `goal(text)` | The agent acts until the goal is reached (`passed`/`failed`/`blocked`). |
 | `expect(text)` | The LLM judges the screen + this step's signals and must quote evidence. |
@@ -212,6 +220,95 @@ Placeholders: `${params.x}`, `${project.base_url}`, `${projects.<p>.base_url}`, 
 Within a step, deterministic expectations run before the judged ones, so a failing check does not spend
 a model call. Anything outside this subset (`if`, `const`, `await`, variables, etc.) is rejected with
 `file:line:col`.
+
+## Mobile web
+
+A suite can run on an emulated phone or tablet. Native apps are out of scope, but mobile **web** is
+not: agent-browser emulates the device (size, pixel ratio and user agent) and qaspec tells the agent
+to behave as on a phone, so it scrolls and opens hamburger menus instead of hunting for links that
+the small layout hides.
+
+```ts
+suite('checkout', { project: 'shop', as: 'buyer', device: 'Pixel 7' }, () => {
+  step('the cart page fits a phone', { start: '/cart' }, () => {
+    expect.state('window.innerWidth').equals(412);
+    goal('open the menu and go to Shipping');
+  });
+});
+```
+
+```toml
+[browser]                  # every suite
+device = "iPhone 14"
+viewport = [390, 844, 3]   # or [width, height, scale]
+
+[projects.shop]            # only this project's suites
+device = "Pixel 7"
+```
+
+**Precedence is `suite` > `project` > `browser`.** The most specific level that sets anything wins
+completely: a suite with `device` does not keep the project's `viewport`, because a device already
+implies its own metrics. `qaspec check` prints what each suite will run on:
+
+```
+specs/checkout.qa.ts > checkout  [shop as buyer] 4 step(s)  on Pixel 7
+```
+
+The device is applied before the suite's first step and restored after it, so a run that mixes a
+phone suite with a desktop suite still runs the desktop one at desktop size. Only the tab the suite
+drives is touched (agent-browser applies emulation per target). If agent-browser does not know the
+device, the suite is `blocked` and reports the names it accepts.
+
+### What `set device` really does (agent-browser 0.27, measured)
+
+Measured with agent-browser 0.27 on Chromium, reading `navigator` and `innerWidth` from the page:
+
+| | size | `devicePixelRatio` | user agent | `navigator.maxTouchPoints` |
+|---|---|---|---|---|
+| no emulation | 1280x577 | 1 | desktop Chrome | 0 |
+| `set device "iPhone 14"` | 390x844 | 3 | `... (iPhone; CPU iPhone OS 16_0 ...) Mobile/15E148 Safari/604.1` | 0 |
+| `set viewport 390 844 3` | 390x844 | 3 | **unchanged** (desktop) | 0 |
+
+- **`set device` changes the user agent; `set viewport` does not.** A suite that needs the app to
+  serve the mobile bundle (a different header, a different layout branch) needs `device`, not
+  `viewport`. `set viewport` only resizes the window, and it reports `mobile: false` while every
+  device reports `mobile: true`.
+- **Touch events are not emulated.** `navigator.maxTouchPoints` stays 0 and
+  `matchMedia('(pointer: coarse)')` stays false with both commands: agent-browser sends mouse events
+  and has no `Emulation.setTouchEmulationEnabled` in 0.27. So a spec can prove the *layout* is
+  mobile, but it cannot prove that a gesture handler reacts to a real tap. Use `agent-browser tap`
+  when a spec needs a touch gesture. qaspec still tells the agent it is a touch layout, because
+  hovering is not how people use a phone.
+- **A page without `<meta name="viewport">` lays out at 980px**, exactly as on a real phone, no
+  matter the emulation. If `window.innerWidth` is 980 instead of 390, the app is missing the meta
+  tag — that is a finding about the app, not a broken emulation.
+- **Device names.** agent-browser lists `iPhone 15, iPhone 16, iPhone 16 Pro, iPhone 17, iPad,
+  iPad Pro, Pixel 9, Galaxy S25` when it rejects a name, but it also accepts any device from the
+  Playwright catalogue, case-insensitively (`iPhone 12`, `Pixel 7`, `Galaxy S21`, `Pixel 5` all work).
+  `set device` applies to the active tab only, and new tabs start with the last window size but the
+  desktop user agent — so qaspec applies the device to the suite's tab after switching to it.
+- **There is no "clear emulation"** in agent-browser 0.27, and a device's user-agent override
+  survives a later `set viewport`. To go back to desktop, qaspec reads the window size before it
+  emulates anything and restores it afterwards (the user agent stays overridden for the rest of the
+  session, which only matters if a later desktop suite depends on the user agent).
+- **iOS Simulator (`-p ios`) is not implemented**: it needs Xcode and only runs on macOS. On Linux
+  and CI, `set device` gives a mobile Chromium with the iOS user agent.
+
+### Deterministic mobile checks
+
+`tests/fixtures/app/specs/app-mobile.qa.ts` is a runnable example (no model call):
+
+```
+▶ specs/app-mobile.qa.ts › mobile  [app as qa]
+  ▶ viewport: iPhone 14
+  ✓ app/qa: reused saved session
+  ✓ the page runs at the size of the emulated phone (5.1s)
+  ✓ the app is served the mobile user agent (1.2s)
+  ✓ the navigation still works on a small screen (3.1s)
+  ↩ viewport restored (1280x577)
+
+✓ PASSED — steps: 3 passed, 0 failed, 0 blocked, 0 skipped · 1 suites · 10.9s · 1 browser session
+```
 
 ## How it works
 
@@ -263,12 +360,13 @@ in `.qaspec/cache/<env>/<sha>.json` (mode 600).
   two identities (one with a login spec, one signed in by the agent), a checkout journey with
   captures, and a back-office suite that uses the captured order number and switches back to the store tab.
 - [`tests/fixtures/app`](tests/fixtures/app): a tiny runnable app (Python stdlib) with the suites used
-  to validate qaspec end to end.
+  to validate qaspec end to end, including `app-mobile.qa.ts`, which runs on an emulated iPhone 14.
 
 ## Status
 
 `0.1.0` is the first usable release. The [`plan/`](plan/) folder holds the analysis and the roadmap:
-`.qa.md` specs, `explore`, HTML reports, judge-verdict caching,
+judge-verdict caching, an iOS Simulator provider (needs Xcode and macOS; mobile web already works
+with `set device`),
 cross-project captures with `needs` between files, and identity switching inside one project
 (implemented, not yet battle-tested).
 

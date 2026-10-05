@@ -127,6 +127,9 @@ pub struct SuiteResult {
     /// A login suite run to authenticate an identity.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub setup: bool,
+    /// Device or viewport the suite ran on (empty when it ran on the browser default).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub device: String,
     pub duration_ms: u64,
     pub steps: Vec<StepResult>,
 }
@@ -140,6 +143,7 @@ impl SuiteResult {
             identity: p.suite.identity.clone(),
             status: Status::Blocked,
             setup: false,
+            device: String::new(),
             duration_ms: 0,
             steps: p
                 .suite
@@ -170,6 +174,7 @@ impl SuiteResult {
             identity: p.suite.identity.clone(),
             status,
             setup: false,
+            device: String::new(),
             duration_ms,
             steps,
         }

@@ -321,8 +321,17 @@ fn real_main(cli: Cli) -> Result<i32> {
                 steps
             );
             for p in &planned {
+                let device = cfg.suite_emulation(
+                    &p.project,
+                    p.suite.device.as_deref(),
+                    p.suite.viewport.map(|v| config::Viewport {
+                        width: v.width,
+                        height: v.height,
+                        scale: v.scale,
+                    }),
+                );
                 println!(
-                    "  {} › {}  [{}{}] {} step(s)",
+                    "  {} › {}  [{}{}] {} step(s){}",
                     p.file,
                     p.suite.name,
                     p.project,
@@ -331,7 +340,12 @@ fn real_main(cli: Cli) -> Result<i32> {
                         .as_ref()
                         .map(|i| format!(" as {i}"))
                         .unwrap_or_default(),
-                    p.suite.steps.len()
+                    p.suite.steps.len(),
+                    if device.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  on {}", device.describe())
+                    }
                 );
             }
             Ok(0)

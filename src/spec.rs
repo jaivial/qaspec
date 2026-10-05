@@ -489,8 +489,29 @@ pub struct Suite {
     pub project: Option<String>,
     pub identity: Option<String>,
     pub start: Option<String>,
+    /// Device emulation for this suite (`device` or `[width, height, scale]`).
+    pub device: Option<String>,
+    pub viewport: Option<Viewport>,
     pub steps: Vec<Step>,
     pub pos: Pos,
+}
+
+/// A viewport in CSS pixels, with an optional device pixel ratio.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+}
+
+impl fmt::Display for Viewport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.scale {
+            Some(s) => write!(f, "{}x{} at {}x", self.width, self.height, s),
+            None => write!(f, "{}x{}", self.width, self.height),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -670,6 +691,40 @@ fn opt_str(o: &[(String, Value)], key: &str, pos: Pos) -> Result<Option<String>>
     }
 }
 
+/// `viewport: [w, h]` or `viewport: [w, h, scale]`.
+fn opt_viewport(o: &[(String, Value)], pos: Pos) -> Result<Option<Viewport>> {
+    let Some((_, Value::Arr(a))) = o.iter().find(|(k, _)| k == "viewport") else {
+        return match o.iter().find(|(k, _)| k == "viewport") {
+            None | Some((_, Value::Null)) => Ok(None),
+            Some((_, v)) => bail!(
+                "{pos}: option `viewport` must be an array, got {}",
+                v.kind()
+            ),
+        };
+    };
+    if a.len() < 2 || a.len() > 3 {
+        bail!("{pos}: `viewport` needs [width, height] or [width, height, scale]");
+    }
+    let mut nums = Vec::with_capacity(a.len());
+    for x in a {
+        match x {
+            Value::Num(n) if *n > 0.0 => nums.push(*n),
+            Value::Num(n) => bail!("{pos}: `viewport` values must be positive, got {n}"),
+            other => bail!(
+                "{pos}: `viewport` must be a list of numbers, got {}",
+                other.kind()
+            ),
+        }
+    }
+    let (w, h) = (nums[0], nums[1]);
+    let scale = nums.get(2).copied();
+    Ok(Some(Viewport {
+        width: w as u32,
+        height: h as u32,
+        scale,
+    }))
+}
+
 fn check_keys(o: &[(String, Value)], allowed: &[&str], what: &str, pos: Pos) -> Result<()> {
     for (k, _) in o {
         if !allowed.contains(&k.as_str()) {
@@ -722,11 +777,19 @@ fn suite(st: &Stmt) -> Result<Suite> {
     let opts = obj_arg(args, 1, pos)?;
     let body = func_arg(args, pos, "suite")?;
     let (mut project, mut identity, mut start) = (None, None, None);
+    let (mut device, mut viewport) = (None, None);
     if let Some(o) = opts {
-        check_keys(o, &["project", "as", "start"], "suite", pos)?;
+        check_keys(
+            o,
+            &["project", "as", "start", "device", "viewport"],
+            "suite",
+            pos,
+        )?;
         project = opt_str(o, "project", pos)?;
         identity = opt_str(o, "as", pos)?;
         start = opt_str(o, "start", pos)?;
+        device = opt_str(o, "device", pos)?;
+        viewport = opt_viewport(o, pos)?;
     }
     let mut steps = Vec::new();
     let mut loose = Vec::new();
@@ -779,6 +842,8 @@ fn suite(st: &Stmt) -> Result<Suite> {
         project,
         identity,
         start,
+        device,
+        viewport,
         steps,
         pos,
     })
@@ -1075,6 +1140,47 @@ suite('Checkout', { project: 'shop', as: 'buyer', start: '/' }, () => {
   });
 });
 "#;
+
+    #[test]
+    fn parses_device_and_viewport_options() {
+        let f = parse(
+            "m.qa.ts",
+            "suite('m', { device: 'iPhone 14' }, () => { expect.url().toBe('/'); })\n\
+             suite('v', { viewport: [390, 844, 3] }, () => { expect.url().toBe('/'); })\n\
+             suite('both', { device: 'Pixel 7', viewport: [360, 640] }, () => { expect.url().toBe('/'); })\n\
+             suite('none', {}, () => { expect.url().toBe('/'); })",
+        )
+        .unwrap();
+        assert_eq!(f.suites[0].device.as_deref(), Some("iPhone 14"));
+        assert_eq!(f.suites[0].viewport, None);
+        let v = f.suites[1].viewport.unwrap();
+        assert_eq!((v.width, v.height, v.scale), (390, 844, Some(3.0)));
+        assert_eq!(v.to_string(), "390x844 at 3x");
+        let v = f.suites[2].viewport.unwrap();
+        assert_eq!((v.width, v.height, v.scale), (360, 640, None));
+        assert_eq!(f.suites[2].device.as_deref(), Some("Pixel 7"));
+        assert_eq!(f.suites[3].device, None);
+        assert_eq!(f.suites[3].viewport, None);
+    }
+
+    #[test]
+    fn device_and_viewport_errors() {
+        let err = |src: &str| parse("e.qa.ts", src).unwrap_err().to_string();
+        let one = |opts: &str| format!("suite('x', {opts}, () => {{ expect.url().toBe('/'); }})");
+        assert!(
+            err(&one("{ viewport: [] }")).contains("e.qa.ts:1:1: `viewport` needs [width, height]")
+        );
+        assert!(err(&one("{ viewport: 390 }"))
+            .contains("e.qa.ts:1:1: option `viewport` must be an array"));
+        assert!(err(&one("{ device: 7 }")).contains("must be a string"));
+        assert!(err(&one("{ viewport: [390] }")).contains("`viewport` needs"));
+        assert!(err(&one("{ viewport: [390, 844, 3, 1] }")).contains("`viewport` needs"));
+        assert!(err(&one("{ viewport: [0, 844] }")).contains("must be positive"));
+        assert!(err(&one("{ viewport: [390, 844, 0] }")).contains("must be positive"));
+        assert!(err(&one("{ viewport: 390 }")).contains("must be an array"));
+        assert!(err(&one("{ device: 7 }")).contains("must be a string"));
+        assert!(err(&one("{ devce: 'x' }")).contains("unknown suite option `devce`"));
+    }
 
     #[test]
     fn parses_sample() {

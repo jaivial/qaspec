@@ -4,7 +4,7 @@
 use crate::agent::{self, Context as AgentCtx, Verdict};
 use crate::browser::{request_matches, truncate, Browser};
 use crate::cache::{self, Cache, CacheMode, KeyParts, Origin, Recorded, Recording};
-use crate::config::{Config, Identity};
+use crate::config::{Config, Emulation, Identity};
 use crate::llm::Llm;
 use crate::report::{ItemResult, Report, Status, StepResult, SuiteResult};
 use crate::spec::{self, CaptureSource, Check, Item, OnFail, SpecFile, Suite, UrlOp};
@@ -38,6 +38,11 @@ pub struct Runner<'a> {
     /// Login suites run during this run (reported as setup).
     setup_results: Vec<SuiteResult>,
     cache: Cache,
+    /// Emulation currently applied to the browser (restored between suites).
+    emulation: Option<Emulation>,
+    /// The same, as the agent is told about it (`iPhone 14, 390x844, mobile user agent`);
+    /// empty on desktop.
+    device_note: Option<String>,
     opts: RunOptions,
 }
 
@@ -373,6 +378,8 @@ impl<'a> Runner<'a> {
             health_checked: HashMap::new(),
             setup_results: Vec::new(),
             cache: Cache::new(&cfg.root, &cfg.env, opts.cache),
+            emulation: None,
+            device_note: None,
             opts,
         })
     }
@@ -809,6 +816,7 @@ impl<'a> Runner<'a> {
             secret_names: id
                 .map(|i| i.secrets.keys().cloned().collect())
                 .unwrap_or_default(),
+            device: self.device_note.clone(),
             history,
         };
         let secrets = id.map(|i| i.secrets.clone()).unwrap_or_default();
@@ -870,7 +878,75 @@ impl<'a> Runner<'a> {
             self.say(&format!("  ⊘ blocked: {reason}"));
             return SuiteResult::blocked(p, &reason);
         }
-        self.run_steps(p, None)
+        let emu = self.suite_emulation(p);
+        let previous = self.emulation.clone();
+        if let Some(e) = &emu {
+            // One session is shared by every suite, so emulate on this suite's own tab.
+            // The size to go back to is read once, before anything is emulated.
+            let applied = self
+                .browser
+                .use_tab(&p.project)
+                .map(|_| self.browser.remember_desktop_viewport())
+                .and_then(|_| self.browser.set_emulation(e));
+            match applied {
+                Ok(info) => {
+                    self.device_note = Some(e.describe_for_agent(Some(&info)));
+                }
+                Err(err) => {
+                    self.emulation = previous;
+                    let msg = format!("cannot emulate {}: {err}", e.describe());
+                    self.say(&format!("  ⊘ blocked: {msg}"));
+                    return SuiteResult::blocked(p, &msg);
+                }
+            }
+            self.emulation = Some(e.clone());
+            self.say(&format!("  ▶ viewport: {}", e.describe()));
+        }
+        let mut r = self.run_steps(p, None);
+        // Put back what the previous suite had, so the next one does not stay on a phone.
+        if emu.is_some() && previous != emu {
+            self.restore_emulation(previous.as_ref());
+        }
+        r.device = emu.as_ref().map(|e| e.describe()).unwrap_or_default();
+        r
+    }
+
+    /// The emulation a suite runs with (`suite > project > browser`).
+    fn suite_emulation(&self, p: &Planned) -> Option<Emulation> {
+        let e = self.cfg.suite_emulation(
+            &p.project,
+            p.suite.device.as_deref(),
+            p.suite.viewport.map(config_viewport),
+        );
+        (!e.is_empty()).then_some(e)
+    }
+
+    /// Puts back what the previous suite had. With no previous emulation the tabs go back to the
+    /// window size the browser had before qaspec emulated anything, because agent-browser has no
+    /// "clear emulation" command.
+    fn restore_emulation(&mut self, previous: Option<&Emulation>) {
+        let target = match previous {
+            Some(e) => Some(e.clone()),
+            None => self.browser.desktop_emulation(),
+        };
+        let Some(target) = target else {
+            return;
+        };
+        if self.emulation.as_ref() == Some(&target) {
+            return;
+        }
+        let label = match previous {
+            Some(e) => e.describe(),
+            None => target.describe(),
+        };
+        match self.browser.restore_emulation_on_all(Some(&target)) {
+            Ok(()) => {
+                self.device_note = previous.map(|_| target.describe());
+                self.emulation = Some(target);
+                self.say(&format!("  ↩ viewport restored ({label})"));
+            }
+            Err(e) => self.say(&format!("  ! could not restore the viewport: {e}")),
+        }
     }
 
     /// Runs a suite's steps in order, sharing browser state between them.
@@ -1018,6 +1094,10 @@ impl<'a> Runner<'a> {
     ) -> Result<StepResult> {
         let cfg = self.cfg;
         self.browser.use_tab(project)?;
+        // A suite can move between projects and emulation is per tab: apply it here too.
+        if let Some(e) = &self.emulation {
+            self.browser.set_emulation(e)?;
+        }
         let identity: Option<Identity> = match (login_identity, ident_name) {
             (Some(i), _) => Some(i.clone()),
             (None, Some(n)) => {
@@ -1232,6 +1312,7 @@ impl<'a> Runner<'a> {
                     locale: proj.locale.as_deref(),
                     username: identity.and_then(|i| i.username.as_deref()),
                     secret_names: vec![],
+                    device: self.device_note.clone(),
                     history,
                 };
                 let model = cfg.llm.as_ref().map(|l| l.judge.clone()).ok_or_else(|| {
@@ -1450,6 +1531,15 @@ fn evaluation_order(items: &[Item]) -> Vec<usize> {
     out
 }
 
+/// The spec's viewport in config form (both carry the same three numbers).
+fn config_viewport(v: spec::Viewport) -> crate::config::Viewport {
+    crate::config::Viewport {
+        width: v.width,
+        height: v.height,
+        scale: v.scale,
+    }
+}
+
 fn steps_project(p: &Planned, idx: usize) -> String {
     p.suite.steps[idx]
         .project
@@ -1569,6 +1659,59 @@ mod tests {
             interpolate("no vars $ {x}", &c, "web", None, "r", &vars).unwrap(),
             "no vars $ {x}"
         );
+    }
+
+    /// The emulation each planned suite runs with, `suite > project > browser`.
+    #[test]
+    fn suite_emulation_follows_the_precedence() {
+        let c = Config::from_str(
+            "[projects.api]\nbase_url='http://api.local:9'\n[projects.web]\nbase_url='https://app.example.com'\nspecs='specs/web/*.qa.ts'\ndevice='Pixel 7'\n[projects.phone]\nbase_url='https://m.example.com'\n[browser]\nviewport=[1280,720]\ndevice='iPhone 14'",
+            PathBuf::from("/root"),
+            &Overrides::default(),
+        )
+        .unwrap();
+        let f = spec::parse(
+            "specs/web/a.qa.ts",
+            "suite('w1', {}, () => { expect.errors.none() })\n\
+             suite('w2', { device: 'iPhone 14' }, () => { expect.errors.none() })\n\
+             suite('w3', { viewport: [360, 640, 2] }, () => { expect.errors.none() })\n\
+             suite('p1', { project: 'phone' }, () => { expect.errors.none() })\n\
+             suite('a1', { project: 'api' }, () => { expect.errors.none() })",
+        )
+        .unwrap();
+        let planned = plan(&c, &[f]).unwrap();
+        let emu = |name: &str| {
+            let p = planned.iter().find(|p| p.suite.name == name).unwrap();
+            c.suite_emulation(
+                &p.project,
+                p.suite.device.as_deref(),
+                p.suite.viewport.map(config_viewport),
+            )
+        };
+        let w1 = emu("w1");
+        assert_eq!(
+            w1.device.as_deref(),
+            Some("Pixel 7"),
+            "the project wins over [browser]"
+        );
+        let w2 = emu("w2");
+        assert_eq!(
+            w2.device.as_deref(),
+            Some("iPhone 14"),
+            "the suite wins over the project"
+        );
+        assert_eq!(w2.viewport, None);
+        let w3 = emu("w3");
+        assert_eq!(w3.device, None);
+        assert_eq!(w3.viewport.unwrap().width, 360);
+        let p1 = emu("p1");
+        assert_eq!(
+            p1.device.as_deref(),
+            Some("iPhone 14"),
+            "no project option: [browser]"
+        );
+        assert_eq!(p1.viewport.unwrap().height, 720);
+        assert_eq!(emu("a1").device.as_deref(), Some("iPhone 14"));
     }
 
     #[test]

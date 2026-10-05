@@ -30,6 +30,8 @@ pub struct Context<'a> {
     pub username: Option<&'a str>,
     /// Secret names available to `fill_secret` (values resolved lazily by `secret`).
     pub secret_names: Vec<String>,
+    /// Device emulation of this suite, when there is one: `iPhone 14, 390x844, touch`.
+    pub device: Option<String>,
     pub history: &'a [String],
 }
 
@@ -176,6 +178,16 @@ fn norm_ref(r: &str) -> String {
 
 fn context_text(ctx: &Context) -> String {
     let mut s = format!("Project: {} (base URL {}).", ctx.project, ctx.base_url);
+    if let Some(d) = &ctx.device {
+        s.push_str(&format!(" Viewport: {d}."));
+        s.push_str(if d.ends_with(", touch") {
+            " It is a phone or tablet layout: scroll instead of hovering, open hamburger or menu \
+             buttons to reach what is not visible, and never rely on hover-only controls."
+        } else {
+            " The window is smaller than a desktop one: scroll to see what is below the fold \
+             before concluding that something is missing."
+        });
+    }
     if let Some(l) = ctx.locale {
         s.push_str(&format!(" The UI language is {l}."));
     }
@@ -619,5 +631,39 @@ mod tests {
             .unwrap()
             .iter()
             .any(|x| x["function"]["name"] == "fill_secret"));
+    }
+
+    #[test]
+    fn the_agent_is_told_the_viewport() {
+        let ctx = Context {
+            project: "app",
+            base_url: "http://x",
+            locale: None,
+            username: None,
+            secret_names: vec![],
+            device: Some("iPhone 14, 390x844, touch".into()),
+            history: &[],
+        };
+        let t = context_text(&ctx);
+        assert!(t.contains("Viewport: iPhone 14, 390x844, touch."), "{t}");
+        assert!(
+            t.contains("scroll instead of hovering"),
+            "the agent is told to behave as on a phone: {t}"
+        );
+        let narrow = Context {
+            device: Some("390x844".into()),
+            ..ctx
+        };
+        let t = context_text(&narrow);
+        assert!(t.contains("Viewport: 390x844."), "{t}");
+        assert!(
+            t.contains("below the fold"),
+            "a narrow window is not a phone: {t}"
+        );
+        let desktop = Context {
+            device: None,
+            ..narrow
+        };
+        assert!(!context_text(&desktop).contains("Viewport"));
     }
 }

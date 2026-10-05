@@ -29,7 +29,7 @@ button{margin-top:14px;padding:8px 16px;font:inherit;font-weight:600;color:#fff;
 ul{padding:0;list-style:none;margin:0 0 8px}li{padding:10px 0;border-bottom:1px solid #eaeef2}
 [role=alert]{color:#cf222e}"""
 
-PAGE = """<!doctype html><html><head><title>{title}</title><style>""" + CSS.replace("{", "{{").replace("}", "}}") + """</style></head><body>
+PAGE = """<!doctype html><html><head><title>{title}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>""" + CSS.replace("{", "{{").replace("}", "}}") + """</style></head><body>
 <nav><b>Todo demo</b><a href="/">Home</a> <a href="/todos">Todos</a> <a href="/broken">Broken</a> <a href="/logout">Log out</a></nav>
 <main>{body}</main></body></html>"""
 
