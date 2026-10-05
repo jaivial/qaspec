@@ -333,6 +333,9 @@ fn exec_tool(
             ))
         }
         "click" => {
+            // agent-browser 0.27 clicks at viewport coordinates without scrolling first, so an
+            // off-screen element is missed silently: bring it into view before acting.
+            let _ = b.run(&["scrollintoview", &norm_ref(&s("ref"))]);
             b.run(&["click", &norm_ref(&s("ref"))])?;
             after(b)
         }
@@ -357,6 +360,7 @@ fn exec_tool(
             after(b)
         }
         "hover" => {
+            let _ = b.run(&["scrollintoview", &norm_ref(&s("ref"))]);
             b.run(&["hover", &norm_ref(&s("ref"))])?;
             after(b)
         }

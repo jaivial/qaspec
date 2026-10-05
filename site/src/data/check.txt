@@ -1,0 +1,8 @@
+ok — env `local`, 5 file(s), 7 suite(s), 14 step(s)
+  specs/app-agent.qa.ts › todos journey  [app as qa] 3 step(s)
+  specs/app-cross.qa.ts › cross-project journey  [app as qa] 3 step(s)
+  specs/app-identities.qa.ts › qa sees their name  [app as qa] 1 step(s)
+  specs/app-identities.qa.ts › back to qa without signing in again  [app as qa] 1 step(s)
+  specs/app-smoke.qa.ts › smoke  [app as qa] 4 step(s)
+  specs/app-identities.qa.ts › viewer sees their name  [app as viewer] 1 step(s)
+  specs/admin-overview.qa.ts › admin overview  [admin] 1 step(s)

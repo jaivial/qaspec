@@ -1,0 +1,283 @@
+{
+ "schemaVersion": "report-1",
+ "version": "0.1.0",
+ "runId": "de4a79e",
+ "env": "local",
+ "browserSession": "qaspec-run",
+ "status": "failed",
+ "exitCode": 1,
+ "durationMs": 38118,
+ "browserCalls": 104,
+ "modelCalls": 9,
+ "tokens": 25518,
+ "steps": {
+  "passed": 7,
+  "failed": 1,
+  "blocked": 0,
+  "skipped": 0
+ },
+ "suites": [
+  {
+   "file": "specs/app-agent.qa.ts",
+   "suite": "todos journey",
+   "project": "app",
+   "identity": "qa",
+   "status": "passed",
+   "durationMs": 24526,
+   "steps": [
+    {
+     "name": "go to the todo list",
+     "status": "passed",
+     "items": [
+      {
+       "label": "goal('open the Todos page from the navigation')",
+       "status": "passed",
+       "detail": "Successfully navigated to the Todos page by clicking the \"Todos\" link in the navigation. The page now displays the Todos heading and a list containing one todo item \"Buy milk\"."
+      },
+      {
+       "label": "expect('the Todos page lists at least one todo')",
+       "status": "passed",
+       "detail": "The page displays a list with at least one todo item: 'Buy milk' is visible in the listitem under the main section"
+      },
+      {
+       "label": "expect.url().toContain('/todos')",
+       "status": "passed",
+       "detail": "URL is http://127.0.0.1:18731/todos"
+      }
+     ],
+     "actions": [
+      "click {\"ref\":\"e2\"}"
+     ],
+     "url": "http://127.0.0.1:18731/todos",
+     "durationMs": 10698,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 3,
+      "failedRequests": 0
+     }
+    },
+    {
+     "name": "add a todo",
+     "status": "passed",
+     "items": [
+      {
+       "label": "goal('add a new todo with the text \"Write qaspec docs de4a79e\"')",
+       "status": "passed",
+       "detail": "Successfully added new todo with text \"Write qaspec docs de4a79e\" to the todo list"
+      },
+      {
+       "label": "expect('the list now contains \"Write qaspec docs de4a79e\"')",
+       "status": "passed",
+       "detail": "StaticText 'Write qaspec docs de4a79e' appears in the list items on the page"
+      },
+      {
+       "label": "expect.network('POST /api/todos').status(201)",
+       "status": "passed",
+       "detail": "1 matching request(s)"
+      },
+      {
+       "label": "expect.storage.local('lastTodo').equals(\"Write qaspec docs de4a79e\")",
+       "status": "passed",
+       "detail": "localStorage[lastTodo] = \"Write qaspec docs de4a79e\""
+      },
+      {
+       "label": "expect.console.noErrors()",
+       "status": "passed"
+      },
+      {
+       "label": "capture('first')",
+       "status": "passed",
+       "detail": "Buy milk"
+      }
+     ],
+     "actions": [
+      "fill {\"ref\":\"e7\",\"text\":\"Write qaspec docs de4a79e\"}",
+      "click {\"ref\":\"e6\"}"
+     ],
+     "url": "http://127.0.0.1:18731/todos",
+     "durationMs": 8407,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 2,
+      "failedRequests": 0
+     }
+    },
+    {
+     "name": "home reflects the new count",
+     "status": "passed",
+     "items": [
+      {
+       "label": "expect('the welcome page says how many todos the user has, and it is more than 1')",
+       "status": "passed",
+       "detail": "The page displays 'You have 2 todos.' which confirms the welcome page says how many todos the user has (2), and 2 is more than 1"
+      },
+      {
+       "label": "expect.visible('Welcome')",
+       "status": "passed",
+       "detail": "`Welcome` is on the page"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18731/",
+     "durationMs": 5420,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 1,
+      "failedRequests": 0
+     }
+    }
+   ]
+  },
+  {
+   "file": "specs/app-smoke.qa.ts",
+   "suite": "smoke",
+   "project": "app",
+   "identity": "qa",
+   "status": "failed",
+   "durationMs": 10663,
+   "steps": [
+    {
+     "name": "home loads signed in",
+     "status": "passed",
+     "items": [
+      {
+       "label": "expect.url().not.toContain('/login')",
+       "status": "passed",
+       "detail": "URL is http://127.0.0.1:18731/"
+      },
+      {
+       "label": "expect.visible('Welcome, qa@example.com')",
+       "status": "passed",
+       "detail": "`Welcome, qa@example.com` is on the page"
+      },
+      {
+       "label": "expect.console.noErrors()",
+       "status": "passed"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18731/",
+     "durationMs": 2768,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 1,
+      "failedRequests": 0
+     }
+    },
+    {
+     "name": "todos page calls the API",
+     "status": "passed",
+     "items": [
+      {
+       "label": "expect.network('GET /api/todos').status(200)",
+       "status": "passed",
+       "detail": "1 matching request(s)"
+      },
+      {
+       "label": "expect.state('window.appState.count').toBeTruthy()",
+       "status": "passed",
+       "detail": "window.appState.count = 2"
+      },
+      {
+       "label": "capture('count')",
+       "status": "passed",
+       "detail": "2"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18731/todos",
+     "durationMs": 2785,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 2,
+      "failedRequests": 0
+     }
+    },
+    {
+     "name": "broken page is detected",
+     "status": "failed",
+     "reason": "expect.console.noErrors(): report failed: 500 | ReferenceError: undefinedFunction is not defined",
+     "items": [
+      {
+       "label": "expect.console.noErrors()",
+       "status": "failed",
+       "detail": "report failed: 500 | ReferenceError: undefinedFunction is not defined"
+      },
+      {
+       "label": "expect.network('/api/report').ok()",
+       "status": "failed",
+       "detail": "GET http://127.0.0.1:18731/api/report -> 500"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18731/broken",
+     "durationMs": 2650,
+     "signals": {
+      "consoleErrors": 1,
+      "pageErrors": 1,
+      "requests": 2,
+      "failedRequests": 1
+     }
+    },
+    {
+     "name": "still on the todos state",
+     "status": "passed",
+     "items": [
+      {
+       "label": "expect.visible('Buy milk')",
+       "status": "passed",
+       "detail": "`Buy milk` is on the page"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18731/todos",
+     "durationMs": 2458,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 2,
+      "failedRequests": 0
+     }
+    }
+   ]
+  },
+  {
+   "file": "specs/admin-overview.qa.ts",
+   "suite": "admin overview",
+   "project": "admin",
+   "status": "passed",
+   "durationMs": 2672,
+   "steps": [
+    {
+     "name": "shows the todo count captured in the app project",
+     "status": "passed",
+     "items": [
+      {
+       "label": "expect.visible('Todos in the system: 2')",
+       "status": "passed",
+       "detail": "`Todos in the system: 2` is on the page"
+      },
+      {
+       "label": "expect.errors.none()",
+       "status": "passed"
+      }
+     ],
+     "actions": [],
+     "url": "http://127.0.0.1:18732/",
+     "durationMs": 2672,
+     "signals": {
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "requests": 2,
+      "failedRequests": 0
+     }
+    }
+   ]
+  }
+ ]
+}

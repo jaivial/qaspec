@@ -1,0 +1,19 @@
+
+▶ specs/app-agent.qa.ts › todos journey  [app as qa]
+  ✓ app/qa: reused saved session
+  ✓ go to the todo list (10.7s)
+  ✓ add a todo (8.4s)
+  ✓ home reflects the new count (5.4s)
+
+▶ specs/app-smoke.qa.ts › smoke  [app as qa]
+  ✓ home loads signed in (2.8s)
+  ✓ todos page calls the API (2.8s)
+  ✗ broken page is detected (2.6s) — expect.console.noErrors(): report failed: 500 | ReferenceError: undefinedFunction is not defined
+      ✗ expect.console.noErrors(): report failed: 500 | ReferenceError: undefinedFunction is not defined
+      ✗ expect.network('/api/report').ok(): GET http://127.0.0.1:18731/api/report -> 500
+  ✓ still on the todos state (2.5s)
+
+▶ specs/admin-overview.qa.ts › admin overview  [admin]
+  ✓ shows the todo count captured in the app project (2.7s)
+
+✗ FAILED — steps: 7 passed, 1 failed, 0 blocked, 0 skipped · 3 suites · 38.1s · 1 browser session · 104 browser calls · 9 model calls (25518 tokens)

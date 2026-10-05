@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- The website is now a Svelte 5 + Vite app in `site/`, deployed from the `gh-pages` branch. It renders
+  the real output and `report.json` of a run (an interactive report viewer) and imports the example
+  specs from the repo. The old static `docs/` page is gone, and it never got deployed.
+- README and website show screenshots of a real run, the report, `qaspec check` and the agent's
+  annotated view (`assets/screenshots/`).
+
+### Fixed
+- The agent's `click` and `hover` scroll the target into view first. agent-browser 0.27 clicks at
+  viewport coordinates, so off-screen elements were missed with no error.
+
 ## [0.1.0] - 2026-10-05
 
 First release.

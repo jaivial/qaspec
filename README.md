@@ -30,16 +30,11 @@ suite('todos journey', { project: 'app', as: 'qa', start: '/' }, () => {
 });
 ```
 
-```
-$ qaspec run
-▶ specs/todos.qa.ts › todos journey  [app as qa]
-  ✓ app/qa: reused saved session
-  ✓ go to the list (10.4s)
-  ✓ add a todo (7.9s)
-  ✓ home shows the count (4.1s)
+<p align="center">
+  <a href="https://jaivial.github.io/qaspec/"><img src="assets/screenshots/run.png" alt="qaspec run: an agent-driven journey passes, a page with a console error and a 500 fails, all in one browser session" width="820"></a>
+</p>
 
-✓ PASSED — steps: 3 passed, 0 failed, 0 blocked, 0 skipped · 1 suites · 22.7s · 1 browser session · 55 browser calls · 8 model calls
-```
+**Website:** https://jaivial.github.io/qaspec/ (it includes an interactive viewer for the report of this run).
 
 ## Why
 
@@ -59,6 +54,17 @@ qaspec sits in between: **an agent that clicks like a person and inspects like a
 - **Secrets stay secret.** The model only sees secret *names*. Values are typed through
   agent-browser's stdin, never argv, and redacted from every log and report.
 - **Single Rust binary.** agent-browser is the only runtime dependency.
+
+## What it looks like
+
+| The agent's view | The report |
+|---|---|
+| <img src="assets/screenshots/agent-view.png" alt="The fixture app with agent-browser's numbered labels on each control" width="400"> | <img src="assets/screenshots/report.png" alt="The report of a run with the failing step expanded: console error and 500 response as evidence" width="400"> |
+| agent-browser numbers every control (`[2]` = ref `e2`). The agent reads the snapshot and acts by ref, while qaspec records console, errors and network for the step. | `.qaspec/report.json` rendered by the website: per-step verdicts, signal counts, evidence for every check, and the agent's actions. |
+
+`qaspec check` validates specs, config, identities and secrets without opening a browser:
+
+<img src="assets/screenshots/check.png" alt="qaspec check output listing suites by project and identity" width="720">
 
 ## Install
 
@@ -186,6 +192,20 @@ qaspec run
 replay cache (no model calls when the UI is unchanged), `.qa.md` specs, `explore`, HTML reports,
 cross-project captures with `needs` between files, and identity switching inside one project
 (implemented, not yet battle-tested).
+
+## Website
+
+The site in [`site/`](site/) is built with Svelte 5 and Vite, and deployed to GitHub Pages
+(`gh-pages` branch) by `.github/workflows/pages.yml`. It renders a real `report.json` and the run output
+from `site/src/data/`, and imports the example specs straight from the repo.
+
+```bash
+cd site && npm ci && npm run dev          # http://localhost:5173/qaspec/
+npm run build && npm run preview          # production build
+```
+
+The README screenshots come from the site's `?shot=run|report|spec|check` views, captured with agent-browser
+(see [`site/README.md`](site/README.md)).
 
 ## Development
 
