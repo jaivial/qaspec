@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- `qaspec report --todo`: a test checklist showing passed and unfinished steps, with the agent's
+  explanation and failed checks under each unfinished step.
+- `qaspec run --format ndjson` now streams each step event as soon as it completes, then emits the
+  final `run` event (the previous output was buffered until the run ended).
 - JSON errors: with `--format json|ndjson` or `--json`, command failures print `{"ok":false,"error":...}` on stdout (exit 3).
 - `qaspec report`: read a finished run from the terminal (`--failed`, `--step <text>`, `--json`).
 - `qaspec run --format json`: the full report on stdout, the text summary on stderr.
