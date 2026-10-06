@@ -11,6 +11,7 @@ use crate::spec::{self, CaptureSource, Check, Item, OnFail, SpecFile, Suite, Url
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -41,11 +42,16 @@ impl RunOptions {
 pub enum Output {
     Direct,
     Buffered,
+    Ndjson,
 }
 
 impl Output {
     fn is_buffered(&self) -> bool {
         matches!(self, Output::Buffered)
+    }
+
+    fn is_ndjson(&self) -> bool {
+        matches!(self, Output::Ndjson)
     }
 }
 
@@ -491,6 +497,25 @@ impl<'a> Runner<'a> {
         } else {
             format!("[{}]", self.opts.session_suffix.trim_start_matches('-'))
         }
+    }
+
+    fn emit_step(&self, p: &Planned, step: &StepResult) {
+        if !self.out.is_ndjson() {
+            return;
+        }
+        let event = serde_json::json!({
+            "event": "step",
+            "suite": p.suite.name,
+            "file": p.file,
+            "project": p.project,
+            "name": step.name,
+            "status": step.status,
+            "reason": step.reason,
+            "durationMs": step.duration_ms,
+            "items": step.items,
+        });
+        println!("{event}");
+        let _ = std::io::stdout().flush();
     }
 
     /// Whatever is still buffered (used by the caller when a worker fails mid-suite).
@@ -1105,7 +1130,9 @@ impl<'a> Runner<'a> {
             };
             if let Some(r) = skip_reason {
                 self.say(&format!("  ○ {} — skipped: {r}", st.name));
-                steps.push(StepResult::skipped(&st.name, &r));
+                let skipped = StepResult::skipped(&st.name, &r);
+                self.emit_step(p, &skipped);
+                steps.push(skipped);
                 continue;
             }
             if has_start {
@@ -1174,6 +1201,7 @@ impl<'a> Runner<'a> {
                     ));
                 }
             }
+            self.emit_step(p, &r);
             history.push(format!(
                 "`{}`: {} (URL {})",
                 st.name,

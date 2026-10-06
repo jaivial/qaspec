@@ -147,6 +147,8 @@ qaspec state list    # saved sign-ins; `qaspec state clear app.qa` forces a new 
 
 Exit codes: `0` passed, `1` a step failed, `2` blocked (environment, credentials, LLM), `3` usage/config error.
 Reports are written to `.qaspec/report.json` (`--json PATH`), and `--junit PATH` adds JUnit XML for CI.
+Use `qaspec report --todo` for a checkbox list of every step; failed steps include the AI agent's
+answer explaining the cause and any failed deterministic checks.
 
 ## `qaspec.toml`
 
@@ -344,6 +346,12 @@ qaspec run
    select, hover, scroll, open, back, wait, read_console, read_network, eval, fill_secret and done.
 6. Before a goal, the replay cache is consulted (§ Replay cache). Otherwise the agent drives the
    browser, and a passing step records what it did.
+
+The same browser session and its project tabs are reused for every suite in a normal run. Use
+`--jobs N` only when you explicitly want separate Chromium sessions.
+
+For agent integrations, `qaspec run --format ndjson` emits each completed step immediately, followed
+by one final `run` event. The text summary remains on stderr, so stdout can be consumed as a stream.
 
 ## Replay cache
 

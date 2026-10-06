@@ -130,6 +130,9 @@ enum Cmd {
     Report {
         /// Report file (default: .qaspec/report.json next to qaspec.toml).
         path: Option<PathBuf>,
+        /// Print every test as a checkbox, including the agent's explanation for failures.
+        #[arg(long)]
+        todo: bool,
         /// Only show failed and blocked steps, with their failing checks.
         #[arg(long)]
         failed: bool,
@@ -356,6 +359,44 @@ fn error_json(e: &anyhow::Error) -> serde_json::Value {
     })
 }
 
+fn todo_text(rep: &serde_json::Value) -> String {
+    let mut out = format!(
+        "test todo list — run {} [{}]\n",
+        rep["runId"].as_str().unwrap_or("?"),
+        rep["status"].as_str().unwrap_or("?")
+    );
+    for suite in rep["suites"].as_array().into_iter().flatten() {
+        out.push_str(&format!("\n{} ({})\n", suite["suite"], suite["file"]));
+        for step in suite["steps"].as_array().into_iter().flatten() {
+            let status = step["status"].as_str().unwrap_or("?");
+            let mark = if status == "passed" { "x" } else { " " };
+            out.push_str(&format!("  [{mark}] {} — {status}\n", step["name"]));
+            if status != "passed" {
+                if let Some(reason) = step["reason"].as_str().filter(|s| !s.is_empty()) {
+                    out.push_str(&format!("      agent answer: {reason}\n"));
+                }
+                for item in step["items"].as_array().into_iter().flatten() {
+                    let item_status = item["status"].as_str().unwrap_or("");
+                    if item_status == "failed" || item_status == "blocked" {
+                        let detail = item["detail"].as_str().unwrap_or("");
+                        out.push_str(&format!(
+                            "      {}: {}{}\n",
+                            item["label"],
+                            item_status,
+                            if detail.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" — {detail}")
+                            }
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn main() {
     let cli = Cli::parse();
     let json = wants_json(&cli.cmd);
@@ -557,6 +598,7 @@ fn real_main(cli: Cli) -> Result<i32> {
         }
         Cmd::Report {
             path,
+            todo,
             failed,
             step,
             json,
@@ -594,7 +636,9 @@ fn real_main(cli: Cli) -> Result<i32> {
                     suites.retain(|su| su["steps"].as_array().is_some_and(|a| !a.is_empty()));
                 }
             }
-            if json {
+            if todo && !json {
+                print!("{}", todo_text(&rep));
+            } else if json {
                 println!("{}", serde_json::to_string_pretty(&rep)?);
             } else {
                 println!(
@@ -686,7 +730,11 @@ fn real_main(cli: Cli) -> Result<i32> {
                 let mut r = runner::Runner::new(
                     &cfg,
                     runner::RunOptions::single(keep_open, quiet, cache_mode),
-                    runner::Output::Direct,
+                    if format == "ndjson" {
+                        runner::Output::Ndjson
+                    } else {
+                        runner::Output::Direct
+                    },
                     None,
                 )?;
                 r.run(&planned)?
@@ -697,24 +745,27 @@ fn real_main(cli: Cli) -> Result<i32> {
                 eprintln!("{}", report.summary());
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if format == "ndjson" {
-                // One JSON object per line, after the run: a `step` event per step, then `run`.
+                // Single-worker runs stream step events from Runner. Parallel runs retain the
+                // buffered fallback so their output remains valid NDJSON.
                 eprintln!("{}", report.summary());
                 let v = serde_json::to_value(&report)?;
-                for su in v["suites"].as_array().into_iter().flatten() {
-                    for st in su["steps"].as_array().into_iter().flatten() {
-                        println!(
-                            "{}",
-                            serde_json::json!({
-                                "event": "step",
-                                "suite": su["suite"],
-                                "file": su["file"],
-                                "name": st["name"],
-                                "status": st["status"],
-                                "reason": st["reason"],
-                                "durationMs": st["durationMs"],
-                                "items": st["items"],
-                            })
-                        );
+                if jobs > 1 {
+                    for su in v["suites"].as_array().into_iter().flatten() {
+                        for st in su["steps"].as_array().into_iter().flatten() {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "event": "step",
+                                    "suite": su["suite"],
+                                    "file": su["file"],
+                                    "name": st["name"],
+                                    "status": st["status"],
+                                    "reason": st["reason"],
+                                    "durationMs": st["durationMs"],
+                                    "items": st["items"],
+                                })
+                            );
+                        }
                     }
                 }
                 println!(
@@ -757,5 +808,23 @@ mod error_json_tests {
         assert_eq!(v["ok"], false);
         assert_eq!(v["exitCode"], 3);
         assert!(v["error"].as_str().unwrap().contains("no qaspec.toml"));
+    }
+
+    #[test]
+    fn todo_report_lists_passes_and_agent_failure_answers() {
+        let report = serde_json::json!({
+            "runId": "r1", "status": "failed",
+            "suites": [{"suite": "checkout", "file": "checkout.qa.ts", "steps": [
+                {"name": "loads", "status": "passed", "items": []},
+                {"name": "pays", "status": "failed", "reason": "the payment API returned 500", "items": [
+                    {"label": "expect.network", "status": "failed", "detail": "HTTP 500"}
+                ]}
+            ]}]
+        });
+        let text = todo_text(&report);
+        assert!(text.contains("[x] \"loads\" — passed"));
+        assert!(text.contains("[ ] \"pays\" — failed"));
+        assert!(text.contains("agent answer: the payment API returned 500"));
+        assert!(text.contains("\"expect.network\": failed — HTTP 500"));
     }
 }
