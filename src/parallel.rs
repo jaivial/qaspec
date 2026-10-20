@@ -30,8 +30,8 @@ impl Chunk {
 
 /// Splits `planned` into `jobs` groups that can run independently, each one keeping plan order.
 ///
-/// Groups are returned in ascending plan order of their first suite. Device suites (a suite with a
-/// `device`) all go to the **first** worker and stay last in it: agent-browser applies `set device`
+/// Device suites and their linked groups go to the **first** worker, keeping plan order
+/// within each worker. Device suites stay last: agent-browser applies `set device`
 /// to the whole browser and cannot undo the user agent, so two workers could each run one safely
 /// but a desktop suite after a device suite in the same worker could not.
 pub fn partition(cfg: &Config, planned: &[Planned], jobs: usize) -> Result<Vec<Vec<usize>>> {
@@ -61,14 +61,21 @@ pub fn partition(cfg: &Config, planned: &[Planned], jobs: usize) -> Result<Vec<V
         .map(|(i, _)| i)
         .collect();
     if !devices.is_empty() && !groups.is_empty() {
-        // Take them out of every worker first, then append them all to the first one.
-        for g in groups.iter_mut().skip(1) {
-            g.retain(|j| !devices.contains(j));
+        // Keep every existing group atomic: moving just the device suite would split
+        // shared identity state or captured values away from its linked suites.
+        let mut merged = Vec::new();
+        let mut others = Vec::new();
+        for group in groups {
+            if group.iter().any(|i| devices.contains(i)) {
+                merged.extend(group);
+            } else {
+                others.push(group);
+            }
         }
-        groups[0].retain(|j| !devices.contains(j));
-        groups[0].extend(devices);
-        groups[0].sort_unstable();
-        groups.retain(|g| !g.is_empty());
+        // The planner already puts device suites last; preserve that plan order.
+        merged.sort_unstable();
+        groups = vec![merged];
+        groups.extend(others);
     }
     Ok(groups)
 }
@@ -84,47 +91,22 @@ pub fn partition(cfg: &Config, planned: &[Planned], jobs: usize) -> Result<Vec<V
 /// 3. A `${capture}` produced by one suite and used by a later one: the value only exists in the
 ///    worker that captured it.
 ///
-/// Suites without an identity have no state to share, so they only get linked by (3).
+/// Anonymous suites may still load an identity in a step; those saved states are linked too.
 pub fn links(cfg: &Config, planned: &[Planned]) -> Vec<Vec<usize>> {
     let mut uf = UnionFind::new(planned.len());
-    // 1. Same (project, identity).
-    let mut by_project_identity: HashMap<(String, String), usize> = HashMap::new();
-    for (i, p) in planned.iter().enumerate() {
-        let Some(id) = &p.suite.identity else {
-            continue;
-        };
-        let key = (p.project.clone(), id.clone());
-        match by_project_identity.get(&key) {
-            Some(j) => uf.union(*j, i),
-            None => {
-                by_project_identity.insert(key, i);
-            }
-        }
-    }
-    // 2. Connected projects share their identities.
+    // Every identity a suite can load belongs to one worker, including identities selected
+    // by individual steps in otherwise anonymous suites. Match runner::run_steps' fallback:
+    // a project switch does not inherit the suite identity.
     let mut comp = project_components(cfg, planned);
     let mut by_component_identity: HashMap<(usize, String), usize> = HashMap::new();
     for (i, p) in planned.iter().enumerate() {
-        let Some(id) = &p.suite.identity else {
-            continue;
-        };
-        let key = (component_of(&mut comp, &p.project), id.clone());
-        match by_component_identity.get(&key) {
-            Some(j) => uf.union(*j, i),
-            None => {
-                by_component_identity.insert(key, i);
-            }
-        }
-        // A step that signs in as another identity of another project joins that thread too.
-        for st in &p.suite.steps {
-            let (Some(pr), Some(as_id)) = (st.project.as_ref(), st.identity.as_ref()) else {
-                continue;
-            };
-            let same = planned.iter().position(|q| {
-                q.project == *pr && q.suite.identity.as_deref() == Some(as_id.as_str())
-            });
-            if let Some(j) = same {
-                uf.union(i, j);
+        for (project, identity) in used_identities(p) {
+            let key = (component_of(&mut comp, &project), identity);
+            match by_component_identity.get(&key) {
+                Some(j) => uf.union(*j, i),
+                None => {
+                    by_component_identity.insert(key, i);
+                }
             }
         }
     }
@@ -151,6 +133,28 @@ pub fn links(cfg: &Config, planned: &[Planned]) -> Vec<Vec<usize>> {
         }
     }
     uf.groups()
+}
+
+/// Saved states a suite can load, including step-level identity overrides.
+fn used_identities(p: &Planned) -> BTreeSet<(String, String)> {
+    let mut ids = BTreeSet::new();
+    if let Some(identity) = &p.suite.identity {
+        ids.insert((p.project.clone(), identity.clone()));
+    }
+    for step in &p.suite.steps {
+        let project = step.project.as_ref().unwrap_or(&p.project);
+        let identity = step.identity.as_ref().or_else(|| {
+            if step.project.is_none() {
+                p.suite.identity.as_ref()
+            } else {
+                None
+            }
+        });
+        if let Some(identity) = identity {
+            ids.insert((project.clone(), identity.clone()));
+        }
+    }
+    ids
 }
 
 /// Projects connected by `depends_on` or by a step that switches `project:`, numbered by component.
@@ -417,19 +421,16 @@ pub fn assert_disjoint_identities(
     for (w, g) in groups.iter().enumerate() {
         for i in g {
             let p = &planned[*i];
-            let Some(id) = &p.suite.identity else {
-                continue;
-            };
-            let key = cfg.state_dir().join(format!("{}.{}.json", p.project, id));
-            let key = key.to_string_lossy().to_string();
-            if let Some(prev) = owner.insert(key.clone(), w) {
-                if prev != w {
-                    bail!(
-                        "internal error: workers {prev} and {w} would both write the state of \
-                         {}.{} ({key})",
-                        p.project,
-                        id
-                    );
+            for (project, identity) in used_identities(p) {
+                let key = cfg.state_dir().join(format!("{project}.{identity}.json"));
+                let key = key.to_string_lossy().to_string();
+                if let Some(prev) = owner.insert(key.clone(), w) {
+                    if prev != w {
+                        bail!(
+                            "internal error: workers {prev} and {w} would both write the state of \
+                             {project}.{identity} ({key})"
+                        );
+                    }
                 }
             }
         }
