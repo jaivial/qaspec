@@ -10,8 +10,8 @@
 //!
 //! The goal text enters the key *after* interpolation, with `${run.id}` put back as the
 //! placeholder: the run id is different on every run and the same goal must always key the same
-//! way. The recorded action values keep the real run id, so a replay types exactly what the agent
-//! typed.
+//! way. The recorded action values keep placeholders and resolve them again for the current run,
+//! so a replay does not reuse the previous run's id.
 //!
 //! `fill_secret` is recorded as the secret *name* only; the value is read at replay time and typed
 //! through agent-browser's stdin (never argv, never in this file).
